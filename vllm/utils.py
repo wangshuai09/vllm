@@ -355,6 +355,20 @@ def is_xpu() -> bool:
         return False
     return hasattr(torch, "xpu") and torch.xpu.is_available()
 
+@lru_cache(maxsize=None)
+def is_npu() -> bool:
+    try:
+        import torch_npu
+    except ImportError:
+        torch_npu = None
+    return torch_npu is not None
+
+
+@lru_cache(maxsize=None)
+def is_mindie() -> bool:
+    # TODO
+    return False
+
 
 @lru_cache(maxsize=None)
 def get_max_shared_memory_bytes(gpu: int = 0) -> int:
@@ -743,7 +757,7 @@ def is_pin_memory_available() -> bool:
     return True
 
 
-class CudaMemoryProfiler:
+class DeviceMemoryProfiler:
 
     def __init__(self, device: Optional[torch.types.Device] = None):
         self.device = device
@@ -756,6 +770,9 @@ class CudaMemoryProfiler:
         elif is_xpu():
             torch.xpu.reset_peak_memory_stats(self.device)  # type: ignore
             mem = torch.xpu.max_memory_allocated(self.device)  # type: ignore
+        elif is_npu():
+            torch.npu.reset_peak_memory_stats(self.device)  # type: ignore
+            mem = torch.npu.max_memory_allocated(self.device)  # type: ignore
         return mem
 
     def __enter__(self):
@@ -1065,7 +1082,7 @@ def _cuda_device_count_stateless(
 def cuda_device_count_stateless() -> int:
     """Get number of CUDA devices, caching based on the value of
     CUDA_VISIBLE_DEVICES at the time of call.
-    
+
     This should be used instead of torch.cuda.device_count()
     unless CUDA_VISIBLE_DEVICES has already been set to the desired
     value."""

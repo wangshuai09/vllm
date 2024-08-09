@@ -18,7 +18,7 @@ from vllm.transformers_utils.config import (ConfigFormat, get_config,
                                             get_hf_text_config)
 from vllm.utils import (STR_NOT_IMPL_ENC_DEC_CUDAGRAPH, GiB_bytes,
                         cuda_device_count_stateless, get_cpu_memory, is_cpu,
-                        is_hip, is_neuron, is_openvino, is_xpu,
+                        is_hip, is_neuron, is_npu, is_openvino, is_xpu,
                         print_warning_once)
 
 if TYPE_CHECKING:
@@ -60,8 +60,8 @@ class ModelConfig:
 
     Args:
         model: Name or path of the huggingface model to use.
-            It is also used as the content for `model_name` tag in metrics 
-            output when `served_model_name` is not specified. 
+            It is also used as the content for `model_name` tag in metrics
+            output when `served_model_name` is not specified.
         tokenizer: Name or path of the huggingface tokenizer to use.
         tokenizer_mode: Tokenizer mode. "auto" will use the fast tokenizer if
             available, "slow" will always use the slow tokenizer, and
@@ -112,15 +112,15 @@ class ModelConfig:
         skip_tokenizer_init: If true, skip initialization of tokenizer and
             detokenizer.
         served_model_name: The model name used in metrics tag `model_name`,
-            matches the model name exposed via the APIs. If multiple model 
-            names provided, the first name will be used. If not specified, 
+            matches the model name exposed via the APIs. If multiple model
+            names provided, the first name will be used. If not specified,
             the model name will be the same as `model`.
-        limit_mm_per_prompt: Maximum number of data instances per modality 
+        limit_mm_per_prompt: Maximum number of data instances per modality
             per prompt. Only applicable for multimodal models.
-        override_neuron_config: Initialize non default neuron config or 
-            override default neuron config that are specific to Neuron devices, 
-            this argument will be used to configure the neuron config that 
-            can not be gathered from the vllm arguments. 
+        override_neuron_config: Initialize non default neuron config or
+            override default neuron config that are specific to Neuron devices,
+            this argument will be used to configure the neuron config that
+            can not be gathered from the vllm arguments.
         config_format: The config format which shall be loaded.
             Defaults to 'auto' which defaults to 'hf'.
     """
@@ -771,9 +771,8 @@ class LoadConfig:
                 fast weight loading.
             "bitsandbytes" will load nf4 type weights.
         ignore_patterns: The list of patterns to ignore when loading the model.
-            Default to "original/**/*" to avoid repeated loading of llama's 
+            Default to "original/**/*" to avoid repeated loading of llama's
             checkpoints.
-            
     """
 
     load_format: Union[str, LoadFormat, "BaseModelLoader"] = LoadFormat.AUTO
@@ -950,7 +949,7 @@ class SchedulerConfig:
         enable_chunked_prefill: If True, prefill requests can be chunked based
             on the remaining max_num_batched_tokens.
         embedding_mode: Whether the running model is for embedding.
-        preemption_mode: Whether to perform preemption by swapping or 
+        preemption_mode: Whether to perform preemption by swapping or
             recomputation. If not specified, we determine the mode as follows:
             We use recomputation by default since it incurs lower overhead than
             swapping. However, when the sequence group has multiple sequences
@@ -1068,6 +1067,8 @@ class DeviceConfig:
                 self.device_type = "cpu"
             elif is_xpu():
                 self.device_type = "xpu"
+            elif is_npu():
+                self.device_type = "npu"
             else:
                 # We don't call torch.cuda.is_available() here to
                 # avoid initializing CUDA before workers are forked
@@ -1160,7 +1161,7 @@ class SpeculativeConfig:
             typical_acceptance_sampler_posterior_threshold (Optional[float]):
                 A threshold value that sets a lower bound on the posterior
                 probability of a token in the target model for it to be
-                accepted. This threshold is used only when we use the 
+                accepted. This threshold is used only when we use the
                 TypicalAcceptanceSampler for token acceptance.
             typical_acceptance_sampler_posterior_alpha (Optional[float]):
                 A scaling factor for the entropy-based threshold in the
@@ -1170,7 +1171,7 @@ class SpeculativeConfig:
                 If set to False, token log probabilities are returned
                 according to the log probability settings in SamplingParams.
                 If not specified, it defaults to True.
-    
+
         Returns:
             Optional["SpeculativeConfig"]: An instance of SpeculativeConfig if
                 the necessary conditions are met, else None.
@@ -1415,13 +1416,13 @@ class SpeculativeConfig:
             typical_acceptance_sampler_posterior_threshold (Optional[float]):
                 A threshold value that sets a lower bound on the posterior
                 probability of a token in the target model for it to be
-                accepted. This threshold is used only when we use the 
+                accepted. This threshold is used only when we use the
                 TypicalAcceptanceSampler for token acceptance.
             typical_acceptance_sampler_posterior_alpha (Optional[float]):
                 A scaling factor for the entropy-based threshold in the
                 TypicalAcceptanceSampler.
             disable_logprobs: If set to True, token log probabilities will not
-                be returned even if requested by sampling parameters. This 
+                be returned even if requested by sampling parameters. This
                 reduces latency by skipping logprob calculation in proposal
                 sampling, target sampling, and after accepted tokens are
                 determined. If set to False, log probabilities will be
@@ -1786,10 +1787,10 @@ def _get_and_verify_max_len(
 def get_served_model_name(model: str,
                           served_model_name: Optional[Union[str, List[str]]]):
     """
-    If the input is a non-empty list, the first model_name in 
-    `served_model_name` is taken. 
-    If the input is a non-empty string, it is used directly. 
-    For cases where the input is either an empty string or an 
+    If the input is a non-empty list, the first model_name in
+    `served_model_name` is taken.
+    If the input is a non-empty string, it is used directly.
+    For cases where the input is either an empty string or an
     empty list, the fallback is to use `self.model`.
     """
     if not served_model_name:

@@ -21,7 +21,7 @@ from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensorInputs,
                              MultiModalInputs, MultiModalRegistry)
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
-from vllm.utils import CudaMemoryProfiler, make_tensor_with_pad
+from vllm.utils import DeviceMemoryProfiler, make_tensor_with_pad
 from vllm.worker.model_runner import AttentionMetadata, SamplingMetadata
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase, ModelRunnerInputBuilderBase,
@@ -149,99 +149,6 @@ class ModelInputForXPUBuilder(ModelRunnerInputBuilderBase[ModelInputForXPU]):
         )
 
     def _prepare_prompt(
-        self,
-        seq_group_metadata_list: List[SequenceGroupMetadata],
-    ) -> Tuple[torch.Tensor, torch.Tensor, AttentionMetadata, List[int],
-               BatchedTensorInputs]:
-        assert len(seq_group_metadata_list) > 0
-        input_tokens: List[int] = []
-        input_positions: List[int] = []
-        slot_mapping: List[int] = []
-        seq_lens: List[int] = []
-        multi_modal_inputs_list: List[MultiModalInputs] = []
-
-        for seq_group_metadata in seq_group_metadata_list:
-            assert seq_group_metadata.is_prompt
-            seq_ids = list(seq_group_metadata.seq_data.keys())
-            assert len(seq_ids) == 1
-            seq_id = seq_ids[0]
-
-            seq_data = seq_group_metadata.seq_data[seq_id]
-            prompt_tokens = seq_data.get_token_ids()
-            computed_len = seq_data.get_num_computed_tokens()
-            seq_len = len(prompt_tokens)
-
-            seq_lens.append(seq_len)  # Prompt token num
-            input_tokens.extend(prompt_tokens)  # Token ids
-
-            # Token position ids
-            # NOTE(woosuk): Here we assume that the first token in the prompt
-            # is always the first token in the sequence.
-            input_positions.extend(list(range(computed_len, seq_len)))
-
-            if seq_group_metadata.block_tables is None:
-                # During memory profiling, the block tables are not initialized
-                # yet. In this case, we just use a dummy slot mapping.
-                slot_mapping.extend([_PAD_SLOT_ID] * seq_len)
-                continue
-
-            # Compute the slot mapping.
-            block_table = seq_group_metadata.block_tables[seq_id]
-            # Mask the [0, start_idx) tokens of the prompt with _PAD_SLOT_ID,
-            # where start_idx is max(0, seq_len - sliding_window).
-            # For example, if the prompt len is 10, sliding window is 8, and
-            # block size is 4, the first two tokens are masked and the slot
-            # mapping will be [-1, -1, 2, 3, 4, 5, 6, 7, 0, 1].
-            start_idx = 0
-            if self.sliding_window is not None:
-                start_idx = max(0, seq_len - self.sliding_window)
-
-            for i in range(computed_len, seq_len):
-                if i < start_idx:
-                    slot_mapping.append(_PAD_SLOT_ID)
-                    continue
-
-                block_number = block_table[i //
-                                           self.block_size]  # type: ignore
-                block_offset = i % self.block_size  # type: ignore
-                slot = block_number * self.block_size + block_offset
-                slot_mapping.append(slot)
-
-        num_prompt_tokens = len(input_tokens)
-
-        input_tokens = torch.tensor(input_tokens,
-                                    dtype=torch.long,
-                                    device=self.device)  # type: ignore
-        input_positions = torch.tensor(input_positions,
-                                       dtype=torch.long,
-                                       device=self.device)  # type: ignore
-        slot_mapping = torch.tensor(slot_mapping,
-                                    dtype=torch.long,
-                                    device=self.device)  # type: ignore
-
-        max_seqlen = max(seq_lens)
-        tmp = [0]
-        tmp.extend(seq_lens)
-        seqlen = torch.tensor(tmp)
-        seqlen_q = torch.cumsum(seqlen, dim=0).to(device=self.device)
-
-        attn_metadata = self.attn_backend.make_metadata(
-            is_prompt=True,
-            slot_mapping=slot_mapping,
-            seq_lens=seq_lens,
-            seqlen_q=seqlen_q,
-            max_seqlen=max_seqlen,
-            seq_lens_tensor=torch.tensor([]),
-            max_decode_seq_len=0,
-            num_prefills=len(seq_lens),
-            num_prefill_tokens=num_prompt_tokens,
-            num_decode_tokens=0,
-            block_tables=torch.tensor([], device=self.device, dtype=torch.int),
-        )
-
-        multi_modal_kwargs = MultiModalInputs.batch(multi_modal_inputs_list)
-
-        return (input_tokens, input_positions, attn_metadata, seq_lens,
                 multi_modal_kwargs)
 
     def _prepare_decode(
@@ -391,7 +298,7 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
         self.model: nn.Module  # Set after init_Model
 
     def load_model(self) -> None:
-        with CudaMemoryProfiler() as m:
+        with DeviceMemoryProfiler() as m:
             self.model = get_model(
                 model_config=self.model_config,
                 device_config=self.device_config,

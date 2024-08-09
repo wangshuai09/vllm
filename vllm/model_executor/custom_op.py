@@ -3,6 +3,9 @@ import torch.nn as nn
 from vllm.platforms import current_platform
 from vllm.utils import is_cpu, is_hip, is_xpu
 
+# TODO: add rms_norm op for torch-npu
+# AttributeError: '_OpNamespace' '_C' object has no attribute 'rms_norm'
+
 
 class CustomOp(nn.Module):
 
