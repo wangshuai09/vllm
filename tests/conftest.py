@@ -31,7 +31,6 @@ from vllm.inputs import (ExplicitEncoderDecoderPrompt, TextPrompt,
                          to_enc_dec_tuple_list, zip_enc_dec_prompts)
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
-from vllm.sequence import SampleLogprobs
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, cuda_device_count_stateless,
                         identity, is_cpu)
 
@@ -207,17 +206,14 @@ _T = TypeVar("_T", nn.Module, torch.Tensor, BatchEncoding, BatchFeature)
 
 class HfRunner:
 
-    def wrap_device(self, input: _T) -> _T:
-        if not is_cpu():
-            # Check if the input is already on the GPU
-            if hasattr(input, 'device') and input.device.type == "cuda":
-                return input  # Already on GPU, no need to move
-            return input.to("cuda")
-        else:
-            # Check if the input is already on the CPU
-            if hasattr(input, 'device') and input.device.type == "cpu":
-                return input  # Already on CPU, no need to move
-            return input.to("cpu")
+    def wrap_device(self, input: _T, device: Optional[str] = None) -> _T:
+        if device is None:
+            return self.wrap_device(input, "cpu" if is_cpu() else "cuda")
+
+        if hasattr(input, "device") and input.device.type == device:
+            return input
+
+        return input.to(device)
 
     def __init__(
         self,

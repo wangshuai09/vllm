@@ -455,7 +455,7 @@ if __name__ == "__main__":
         "--device",
         type=str,
         default="auto",
-        choices=["auto", "cuda", "cpu", "openvino", "tpu", "xpu"],
+        choices=["auto", "cuda", "cpu", "openvino", "tpu", "xpu", "npu"],
         help='device type for vLLM execution, supporting CUDA, OpenVINO and '
         'CPU.')
     parser.add_argument(

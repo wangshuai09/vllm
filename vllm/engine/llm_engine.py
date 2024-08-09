@@ -150,7 +150,7 @@ class LLMEngine:
             decoding.
         executor_class: The model executor class for managing distributed
             execution.
-        prompt_adapter_config (Optional): The configuration related to serving 
+        prompt_adapter_config (Optional): The configuration related to serving
             prompt adapters.
         log_stats: Whether to log statistics.
         usage_context: Specified entry point, used for usage info collection.
@@ -526,6 +526,17 @@ class LLMEngine:
             else:
                 from vllm.executor.xpu_executor import XPUExecutor
                 executor_class = XPUExecutor
+        elif engine_config.device_config.device_type == "npu":
+            if distributed_executor_backend == "mp":
+                from vllm.executor.multiproc_npu_executor import (
+                    MultiprocessingNPUExecutorAsync)
+                executor_class = MultiprocessingNPUExecutorAsync
+            elif distributed_executor_backend == "ray":
+                raise NotImplementedError(
+                    "ray is not implemented in Ascend NPU currently")
+            else:
+                from vllm.executor.npu_executor import NPUExecutorAsync
+                executor_class = NPUExecutorAsync
         elif distributed_executor_backend == "ray":
             initialize_ray_cluster(engine_config.parallel_config)
             from vllm.executor.ray_gpu_executor import RayGPUExecutor
@@ -801,203 +812,7 @@ class LLMEngine:
         inputs: SingletonPromptInputs,
         request_id: str,
         lora_request: Optional[LoRARequest] = None,
-    ) -> PromptComponents:
-        '''
-        Extract the components of any single encoder or decoder input prompt.
-
-        Arguments:
-
-        * request_id
-        * inputs: single encoder or decoder input prompt
-        * lora_request: this is only valid for decoder prompts
-
-        Returns:
-
-        * prompt
-        * prompt_token_ids
-        * multi_modal_data
-        '''
-
-        if isinstance(inputs, str):
-            prompt = inputs
-            prompt_token_ids = self._tokenize_prompt(
-                prompt,
-                request_id=request_id,
-                lora_request=lora_request,
-            )
-            multi_modal_data = None
-        elif isinstance(inputs, dict):
-            if "prompt_token_ids" in inputs:
-                prompt = None
-                prompt_token_ids = inputs["prompt_token_ids"]
-            else:
-                # NOTE: This extra assignment is required to pass mypy
-                prompt = parsed_prompt = inputs["prompt"]
-                prompt_token_ids = self._tokenize_prompt(
-                    parsed_prompt,
-                    request_id=request_id,
-                    lora_request=lora_request,
-                )
-
-            multi_modal_data = inputs.get("multi_modal_data")
-        else:
-            assert_never(inputs)
-
-        return prompt, prompt_token_ids, multi_modal_data
-
-    def _apply_prompt_adapter(
-        self,
-        prompt_token_ids: List[int],
-        prompt_adapter_request: Optional[PromptAdapterRequest],
-    ) -> List[int]:
-        if prompt_adapter_request:
-            prompt_token_ids = (
-                [0] * prompt_adapter_request.prompt_adapter_num_virtual_tokens
-                + prompt_token_ids)
-
-        return prompt_token_ids
-
-    def _get_default_enc_dec_decoder_prompt(self) -> List[int]:
-        '''
-        Specifically for encoder/decoder models:
-        generate a default decoder prompt for when
-        the user specifies only the encoder prompt.
-
-        Encoder/decoder models utilize the decoder
-        prompt in different ways; as new models are
-        added, it is intended that this function
-        will be extended to produce differing
-        default decoder prompts, depending on the
-        model variety.
-
-        Absent a special case, the default behavior
-        of this method is to mirror the behavior of
-        the HuggingFace (HF) GenerationMixin for a None
-        decoder prompt, which is to employ a logit processor
-        setting to force the first decoded token to be <BOS>.
-        Here, this behavior is approximated by having the
-        "default" decoder prompt be <BOS>.
-
-        However, it is possible that in the future
-        other models may have different or more 
-        complex logic for the default decoder prompt.
-        This motivates having a special helper method
-        for default decoder prompts.
-
-        Returns:
-
-        * prompt_token_ids
-        '''
-
-        bos_token_id = self._get_bos_token_id()
-        assert bos_token_id is not None
-        return [bos_token_id]
-
-    def _build_enc_dec_llm_inputs(
-        self,
-        encoder_comps: PromptComponents,
-        decoder_comps: DecoderPromptComponents,
-    ) -> EncoderDecoderLLMInputs:
-        encoder_prompt, encoder_prompt_ids, encoder_mm_data = encoder_comps
-        decoder_prompt, decoder_prompt_ids, decoder_mm_data = decoder_comps
-
-        if encoder_mm_data is not None or decoder_mm_data is not None:
-            raise ValueError("Multi-modal encoder-decoder models are "
-                             "not supported yet")
-
-        decoder_prompt_ids = (
-            self._prepare_decoder_input_ids_for_generation(decoder_prompt_ids))
-
-        return EncoderDecoderLLMInputs(
-            prompt_token_ids=decoder_prompt_ids,
-            prompt=decoder_prompt,
-            encoder_prompt_token_ids=encoder_prompt_ids,
-            encoder_prompt=encoder_prompt,
-        )
-
-    def _process_encoder_decoder_prompt(
-        self,
-        inputs: PromptInputs,
-        request_id: str,
-    ) -> EncoderDecoderLLMInputs:
-        '''
-        For encoder/decoder models only:
-        Process an input prompt into an
-        :class:`EncoderDecoderLLMInputs` instance.
-
-        There are two types of input prompts:
-        singleton prompts which carry only the
-        encoder prompt, and explicit encoder/decoder
-        prompts which carry both the encoder and the
-        decoder prompts as member variables.
-
-        This function handles the following scenarios:
-        * Singleton encoder prompt: extract encoder prompt
-          token ids & infer default decoder prompt token ids
-        * Explicit encoder/decoder prompt: extract encoder
-          and decoder prompt token ids
-
-        Note that for Explicit encoder/decoder prompts,
-        each sub-prompt (encoder or decoder prompt) can
-        have any possible singleton type; thus this
-        method relies on helper functions to obtain
-        token ids for the sub-prompts.
-        
-        Arguments:
-
-        * inputs: an input prompt
-        * request_id
-
-        Returns:
-
-        * :class:`EncoderDecoderLLMInputs` instance
-        '''
-
-        encoder_comps: PromptComponents
-        decoder_comps: DecoderPromptComponents
-
-        if is_explicit_encoder_decoder_prompt(inputs):
-            encoder_comps = self._extract_prompt_components(
-                inputs["encoder_prompt"],
-                request_id=request_id,
-            )
-
-            if (decoder_input := inputs["decoder_prompt"]) is None:
-                decoder_comps = None, None, None
-            else:
-                decoder_comps = self._extract_prompt_components(
-                    decoder_input,
-                    request_id=request_id,
-                )
-        else:
-            encoder_comps = self._extract_prompt_components(
-                inputs,
-                request_id=request_id,
-            )
-
-            decoder_comps = None, None, None
-
-        return self._build_enc_dec_llm_inputs(encoder_comps, decoder_comps)
-
-    def _build_decoder_only_llm_inputs(
-        self,
-        prompt_comps: PromptComponents,
-        prompt_adapter_request: Optional[PromptAdapterRequest],
-    ) -> LLMInputs:
-        prompt, prompt_token_ids, multi_modal_data = prompt_comps
-
-        prompt_token_ids = self._apply_prompt_adapter(
-            prompt_token_ids, prompt_adapter_request=prompt_adapter_request)
-
-        return LLMInputs(prompt_token_ids=prompt_token_ids,
-                         prompt=prompt,
-                         multi_modal_data=multi_modal_data)
-
-    def _process_decoder_only_prompt(
-        self,
-        inputs: SingletonPromptInputs,
-        request_id: str,
-        lora_request: Optional[LoRARequest] = None,
+        trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
     ) -> LLMInputs:
         '''
@@ -1273,8 +1088,66 @@ class LLMEngine:
 
         ctx: The virtual engine context to work on
         request_id: If provided, then only this request is going to be processed
-        
         """
+
+        def update_prefill_num_computed_tokens(
+                seq_group: SequenceGroup,
+                seq_group_meta: SequenceGroupMetadata, num_outputs: int,
+                is_first_step_output: Optional[bool]) -> None:
+            """
+            When multi-step and chunked-prefill are enabled together, the
+            prefill sequence scheduled for multi-step execution turn into
+            decodes in the first step itself. This function accounts
+            for that conversion.
+
+            seq_group: SequenceGroup - A prefill seq_group
+            seq_group_meta: SequenceGroupMetadata - Metadata of the given
+              prefill seq_group
+            num_outputs: int - number of output tokens being processed for the
+              given seq_group
+            is_first_step_output: Optional[bool] -
+                If multi-step is enabled and num_outputs is 1, this value
+                indicates if this outputs belongs to the first step in the
+                multi-step.
+                If multi-step is enabled and num_outputs > 1, this value
+                must be None, as num_outputs > 1 indicates that outputs from
+                all the steps in multi-step are submitted in a single burst.
+                When multi-step is disabled, this value is always True.
+            """
+
+            assert seq_group_meta.is_prompt
+
+            token_chunk_size = seq_group_meta.token_chunk_size
+
+            if num_outputs == 1:
+                assert is_first_step_output is not None
+
+                if seq_group_meta.state.num_steps == 1:
+                    assert is_first_step_output is True
+                    seq_group.update_num_computed_tokens(token_chunk_size)
+                    return
+
+                # multi-step prefill is only supported when multi-step is
+                # enabled with chunked prefill
+                assert self.scheduler_config.is_multi_step and \
+                        self.scheduler_config.chunked_prefill_enabled
+                if is_first_step_output is True:
+                    # This sequence is a prompt during the first step only.
+                    seq_group.update_num_computed_tokens(token_chunk_size)
+                return
+
+            assert is_first_step_output is None
+
+            # multi-step prefill is only supported when multi-step is
+            # enabled with chunked prefill. Outputs from all the steps are
+            # submitted in a single burst.
+            assert self.scheduler_config.is_multi_step and \
+                    self.scheduler_config.chunked_prefill_enabled
+            assert num_outputs == seq_group_meta.state.num_steps, \
+                f"#outputs {len(outputs)} - num steps {seq_group_meta.state.num_steps}" #noqa
+            # This sequence is a prompt during the first step only.
+            seq_group.update_num_computed_tokens(token_chunk_size)
+
         now = time.time()
 
         if len(ctx.output_queue) == 0:

@@ -45,10 +45,17 @@ from vllm.model_executor.model_loader.weight_utils import (
     default_weight_loader, row_parallel_weight_loader)
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.model_executor.utils import set_weight_attrs
+from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
 
+from .interfaces import SupportsLoRA
 
-@torch.compile
+current_backend = "inductor"
+if current_platform.is_npu():
+    current_backend = "npu"
+
+
+@torch.compile(backend=current_backend)
 def layer_norm_func(hidden_states, weight, variance_epsilon):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
