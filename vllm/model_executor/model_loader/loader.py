@@ -805,8 +805,8 @@ class BitsAndBytesModelLoader(BaseModelLoader):
             model_name_or_path: str,
             allowed_patterns: List[str],
             revision: Optional[str] = None) -> Tuple[List[str], str]:
-        """Retrieve weight files. Download the files if necessary. 
-        
+        """Retrieve weight files. Download the files if necessary.
+
         Return the weight files and the file pattern."""
         is_local = os.path.isdir(model_name_or_path)
 

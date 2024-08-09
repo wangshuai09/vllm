@@ -739,13 +739,13 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         family of functions.
 
         Args:
-            num_seqs (int): Number of sequences scheduled to run. 
+            num_seqs (int): Number of sequences scheduled to run.
             max_decode_seq_len (int): Greatest of all the decode sequence
                 lengths. Used only in checking the viablility of using
                 CUDA graphs.
             max_encoder_seq_len (int, optional): Greatest of all the encode
                 sequence lengths. Defaults to 0. Used only in checking the
-                viability of using CUDA graphs. 
+                viability of using CUDA graphs.
         Returns:
             int: Returns the determined number of padding sequences. If
                 CUDA graphs is not viable, returns -1.

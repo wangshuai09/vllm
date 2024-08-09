@@ -543,6 +543,17 @@ class LLMEngine:
             else:
                 from vllm.executor.xpu_executor import XPUExecutor
                 executor_class = XPUExecutor
+        elif engine_config.device_config.device_type == "npu":
+            if distributed_executor_backend == "mp":
+                from vllm.executor.multiproc_npu_executor import (
+                    MultiprocessingNPUExecutorAsync)
+                executor_class = MultiprocessingNPUExecutorAsync
+            elif distributed_executor_backend == "ray":
+                raise NotImplementedError(
+                    "ray is not implemented in Ascend NPU currently")
+            else:
+                from vllm.executor.npu_executor import NPUExecutorAsync
+                executor_class = NPUExecutorAsync
         elif distributed_executor_backend == "ray":
             initialize_ray_cluster(engine_config.parallel_config)
             from vllm.executor.ray_gpu_executor import RayGPUExecutor
@@ -977,9 +988,9 @@ class LLMEngine:
         This function updates num_computed_tokens for prompt sequences
         when Multi-Step is enabled.
 
-        seq_group: SequenceGroup to update the num_computed_tokens for. 
+        seq_group: SequenceGroup to update the num_computed_tokens for.
         seq_group_meta: Metadata of the given SequenceGroup.
-        is_first_step_output: Optional[bool] - 
+        is_first_step_output: Optional[bool] -
             When available, is_first_step_output indicates if the appended
             output token is the output of the first-step in multi-step.
             A value of None indicates that outputs from all steps in
