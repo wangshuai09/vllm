@@ -150,7 +150,7 @@ class LLMEngine:
             decoding.
         executor_class: The model executor class for managing distributed
             execution.
-        prompt_adapter_config (Optional): The configuration related to serving 
+        prompt_adapter_config (Optional): The configuration related to serving
             prompt adapters.
         log_stats: Whether to log statistics.
         usage_context: Specified entry point, used for usage info collection.
@@ -537,6 +537,13 @@ class LLMEngine:
                 "multiprocessing distributed executor backend does not "
                 "support VLLM_USE_RAY_SPMD_WORKER=1")
             executor_class = MultiprocessingGPUExecutor
+        elif engine_config.device_config.device_type == "npu":
+            if distributed_executor_backend == "ray":
+                # TODO
+                pass
+            else:
+                from vllm.executor.npu_executor import NPUExecutor
+                executor_class = NPUExecutor
         else:
             from vllm.executor.gpu_executor import GPUExecutor
             executor_class = GPUExecutor
@@ -879,7 +886,7 @@ class LLMEngine:
         "default" decoder prompt be <BOS>.
 
         However, it is possible that in the future
-        other models may have different or more 
+        other models may have different or more
         complex logic for the default decoder prompt.
         This motivates having a special helper method
         for default decoder prompts.
@@ -942,7 +949,7 @@ class LLMEngine:
         have any possible singleton type; thus this
         method relies on helper functions to obtain
         token ids for the sub-prompts.
-        
+
         Arguments:
 
         * inputs: an input prompt
@@ -1273,7 +1280,7 @@ class LLMEngine:
 
         ctx: The virtual engine context to work on
         request_id: If provided, then only this request is going to be processed
-        
+
         """
         now = time.time()
 
