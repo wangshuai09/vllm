@@ -17,7 +17,10 @@ from vllm.model_executor.layers.sampler import (get_logprobs,
 from vllm.model_executor.sampling_metadata import (SamplingMetadata,
                                                    SamplingTensors,
                                                    SequenceGroupToSample)
-from mindie_llm.text_generator.utils.sampling_metadata import SamplingData, SamplingParam
+from vllm.utils import is_mindie
+
+if is_mindie():
+    from mindie_llm.text_generator.utils.sampling_metadata import SamplingData, SamplingParam
 
 SampleResultType = List[Tuple[List[int], List[int]]]
 _SAMPLING_EPS = 1e-5
@@ -229,7 +232,7 @@ class AscendSampler(nn.Module):
         self,
         sampling_metadata: SamplingMetadata,
         vocab_size: int,
-    ) -> Tuple[SamplingData, SamplingParam]:
+    ) -> Tuple["SamplingData", "SamplingParam"]:
         """Initalize SamplingData and SamplingParam for MindIE.
 
         SamplingData receives all_input_tokens (prompt_tokens and output_tokens),

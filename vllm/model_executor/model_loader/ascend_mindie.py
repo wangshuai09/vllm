@@ -10,8 +10,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from mindie_llm.text_generator.adapter.generator_torch import GeneratorTorch
-
 from vllm.config import DeviceConfig, ModelConfig, LoadConfig
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.sampler import Sampler
@@ -22,6 +20,10 @@ from vllm.model_executor.model_loader.weight_utils import initialize_dummy_weigh
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.attention.backends.ascend import AscendMetadata
 from vllm.model_executor.models.interfaces import supports_lora
+from vllm.utils import is_mindie
+
+if is_mindie():
+    from mindie_llm.text_generator.adapter.generator_torch import GeneratorTorch
 
 MINDIE_SUPPORT_DTYPE = [torch.float16, torch.float32, torch.bfloat16]
 
