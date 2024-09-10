@@ -509,7 +509,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             # add ENV var to turn on/off maskfree_attn and change 16384
             # batch_size = len(attn_metadata.seq_lens)
             if attn_metadata.attn_mask is None and query.shape[0] > 16384:
-                attn_metadata.attn_mask = self.attn_free_mask_pfa
+                attn_metadata.attn_mask = self.attn_free_mask_pfa()
                 attn_metadata.sparse_mode = 2
 
             if attn_metadata.attn_mask is None:
@@ -577,7 +577,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             query = query.view(
                 -1,
                 1,
-                self.head_size * self.num_kv_heads,
+                self.head_size * self.num_heads,
             )
             output = torch_npu.npu_incre_flash_attention(
                 query,

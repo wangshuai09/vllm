@@ -1,10 +1,7 @@
 import torch.nn as nn
 
 from vllm.platforms import current_platform
-from vllm.utils import is_cpu, is_hip, is_xpu
-
-# TODO: add rms_norm op for torch-npu
-# AttributeError: '_OpNamespace' '_C' object has no attribute 'rms_norm'
+from vllm.utils import is_cpu, is_hip, is_npu, is_xpu
 
 
 class CustomOp(nn.Module):
@@ -53,6 +50,13 @@ class CustomOp(nn.Module):
         # NOTE(woosuk): This is a placeholder for future extensions.
         return self.forward_native(*args, **kwargs)
 
+    def forward_npu(self, *args, **kwargs):
+        # By default, we assume that Gaudi ops are compatible with the
+        # PyTorch-native implementation.
+        # NOTE(woosuk): This is a placeholder for future extensions.
+        # TODO: try torch_npu impl and replace if better perf
+        return self.forward_native(*args, **kwargs)
+
     def dispatch_forward(self):
         # NOTE(woosuk): Here we assume that vLLM was built for only one
         # specific backend. Currently, we do not support dynamic dispatching.
@@ -64,5 +68,7 @@ class CustomOp(nn.Module):
             return self.forward_tpu
         elif is_xpu():
             return self.forward_xpu
+        elif is_npu():
+            return self.forward_npu
         else:
             return self.forward_cuda
