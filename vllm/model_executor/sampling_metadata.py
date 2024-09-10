@@ -11,13 +11,17 @@ from vllm.sequence import (VLLM_TOKEN_ID_ARRAY_TYPE, SequenceData,
 from vllm.triton_utils.sample import get_num_triton_sampler_splits
 from vllm.utils import (PyObjectCache, async_tensor_h2d,
                         is_pin_memory_available, make_tensor_with_pad,
-                        maybe_expand_dim)
+                        maybe_expand_dim, is_npu)
 
 _SAMPLING_EPS = 1e-5
 _SEED_0_REPLACEMENT = 3403598558
 # Some triton sampler related code is guarded before it is ready.
 _USE_TRITON_SAMPLER = False
 
+# NOTE (cmq): continuous batching is not support in torch-npu backend now,
+# thus doing pad in input tokens/positions and calc model_output_idx
+# according to the padding length
+_DO_PAD = is_npu()
 
 @dataclass
 class SequenceGroupToSample:
@@ -264,6 +268,7 @@ def _prepare_seq_groups(
         # If the current seq group is in decode stage, it is None.
         seq_len: Optional[int] = None
         query_len: Optional[int] = None
+        padding_len: Optional[int] = 0
         prompt_logprob_indices: List[int] = \
             sample_obj.prompt_logprob_indices if cache is not None else []
         sample_indices: List[int] = \
@@ -287,6 +292,8 @@ def _prepare_seq_groups(
             prompt_logprob_len = (query_len - num_prefill_sample
                                   if do_sample else query_len)
             sample_len = num_prefill_sample if do_sample else 0
+            if _DO_PAD:
+                padding_len = max(seq_lens) - sample_len - prompt_logprob_len
         else:
             # Decode
             prompt_logprob_len = 0
@@ -312,6 +319,8 @@ def _prepare_seq_groups(
             selected_token_indices.extend(
                 range(model_output_idx, model_output_idx + sample_len))
         model_output_idx += sample_len
+        if _DO_PAD:
+            model_output_idx += padding_len
 
         # We now find indices for logprob computation and sampling.
         """
