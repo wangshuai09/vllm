@@ -731,7 +731,7 @@ class NPUModelRunnerBase(ModelRunnerBase[TModelInputForNPU]):
 
     def model_router(self) -> None:
         # TODO: model_support_in_mindie, get_mindie_model
-        if is_mindie and model_supports_in_mindie(self.model_config):
+        if is_mindie() and model_supports_in_mindie(self.model_config):
             self.model = get_mindie_model(self.model_config,
                                           self.device_config,
                                           self.load_config,
