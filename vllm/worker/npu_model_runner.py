@@ -1077,7 +1077,7 @@ class NPUModelRunner(NPUModelRunnerBase[ModelInputForNPUWithSamplingMetadata]):
             sampling_metadata = SamplingMetadata.prepare(
                 seq_group_metadata_list, model_input.seq_lens,
                 model_input.query_lens, self.device, self.pin_memory,
-                generators)
+                generators, pad_for_invariant_seq_len=True)
         else:
             sampling_metadata = None
         is_prompt = (seq_group_metadata_list[0].is_prompt

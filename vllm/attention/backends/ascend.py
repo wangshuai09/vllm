@@ -92,6 +92,9 @@ class AscendPagedAttention(PagedAttention):
         value_cache: torch.Tensor,
         slot_indices: torch.Tensor,
     ) -> None:
+        batch_size, seq_len, slot_dim = slot_indices.shape
+        key = key.view(batch_size, seq_len, key_cache.shape[-1])
+        value = value.view(batch_size, seq_len, value_cache.shape[-1])
         torch_npu.npu_scatter_nd_update_(key_cache, slot_indices, key)
         torch_npu.npu_scatter_nd_update_(value_cache, slot_indices, value)
 
@@ -166,10 +169,11 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         # use_v2_block_manager not supported in Ascend
         self.use_v2_block_manager = False
 
-    def compute_slot_indices(
+    def compute_slot_mapping_and_indices(
         self,
         is_profile_run: bool,
-        slot_indices: List[List[int]],
+        slot_mapping: List[List[int]],
+        slot_indices: List[List[List[int]]],
         seq_id: int,
         seq_len: int,
         context_len: int,
@@ -178,17 +182,36 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         block_tables: Dict[int, List[int]],
     ):
         """
-        Compute slot indices.
+        Compute slot mapping and indices.
         """
+        # TODO (cmq): update me the same as the latest vllm
+        # (use _compute_slot_mapping_numpy)
         if is_profile_run:
             # During memory profiling, the block tables are not
-            # initialized yet. In this case, we just pass the slot indices updating.
+            # initialized yet. In this case, we just use a dummy
+            # slot mapping and pass the slot indices updating.
+            slot_mapping.append([PAD_SLOT_ID] * seq_len)
             return
+        # Mask the [0, start_idx) tokens of the prompt with
+        # PAD_SLOT_ID, where start_idx is max(0, seq_len -
+        # sliding_window). For example, if the prompt len is 10,
+        # sliding window is 8, and block size is 4, the first two
+        # tokens are masked and the slot mapping will be
+        # [-1, -1, 2, 3, 4, 5, 6, 7, 0, 1].
+        padding_mask_len = max(0, start_idx - context_len)
+        slot_mapping.extend([PAD_SLOT_ID] * padding_mask_len)
+
         block_table = block_tables[seq_id]
+        tmp_slot_mapping = []
+        tmp_slot_indices = []
         for i in range(max(start_idx, context_len), seq_len):
             block_number = block_table[i // block_size]
             block_offset = i % block_size
-            slot_indices.append([block_number, block_offset])
+            slot = block_number * block_size + block_offset
+            tmp_slot_mapping.append(slot)
+            tmp_slot_indices.append([block_number, block_offset])
+        slot_mapping.append(tmp_slot_mapping)
+        slot_indices.append(tmp_slot_indices)
 
     def _add_seq_group(
         self,
@@ -260,18 +283,10 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
                 self.sliding_window,
                 self.use_v2_block_manager,
             )
-            compute_slot_mapping(
+
+            self.compute_slot_mapping_and_indices(
                 is_profile_run,
                 self.slot_mapping,
-                seq_id,
-                seq_len,
-                context_len,
-                start_idx,
-                self.block_size,
-                inter_data.block_tables,
-            )
-            self.compute_slot_indices(
-                is_profile_run,
                 self.slot_indices,
                 seq_id,
                 seq_len,
@@ -280,30 +295,6 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
                 self.block_size,
                 inter_data.block_tables,
             )
-
-            """
-            Compute the start index of slot mapping.
-            """
-            start_idx = 0
-            if is_prompt and self.sliding_window is not None:
-                assert context_len == 0, (
-                    "Prefix caching is currently not supported with "
-                    "sliding window attention in V1 block manager"
-                )
-                # When prefill, we use it to not write slots to kv cache
-                # to save memory.
-                start_idx = max(0, query_len - self.sliding_window)
-
-            """
-            Compute slot mapping.
-            """
-            if is_profile_run:
-                # During memory profiling, the block tables are not
-                # initialized yet. In this case, we just use a dummy
-                # slot mapping.
-                # In embeddings, the block tables are {seq_id: None}.
-                self.slot_mapping.extend([PAD_SLOT_ID] * seq_len)
-                return
 
     def build(
         self,
@@ -339,6 +330,27 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         max_prefill_seq_len = max(self.prefill_seq_lens, default=0)
         max_decode_seq_len = max(self.curr_seq_lens, default=0)
         num_decode_tokens = self.num_decode_tokens
+        max_seq_len = max(seq_lens)
+        # print(max_seq_len, max_query_len, max_decode_seq_len, max_prefill_seq_len)
+        slot_mapping_tensor = make_tensor_with_pad(
+            self.slot_mapping,
+            pad=PAD_SLOT_ID,
+            dtype=torch.long,
+            max_len=max_seq_len,
+            device=device,
+        )
+
+        # make slot indices tensor with pad
+        pad_slot_indices: List[List[List[int]]] = []
+        for idx in self.slot_indices:
+            pad_slot_indices.append(idx)
+            if len(idx) < max_query_len:
+                pad_slot_indices[-1].extend(
+                    [[PAD_SLOT_ID, 0]] * (max_query_len - len(idx))
+                )
+        slot_indices_tensor = torch.tensor(
+            pad_slot_indices, dtype=torch.int64, device=device
+        )
 
         if use_captured_graph:
             # not support in Ascend now
@@ -382,21 +394,6 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             dim=0,
             dtype=query_start_loc.dtype,
             out=query_start_loc[1:],
-        )
-
-        slot_mapping_tensor = torch.tensor(
-            self.slot_mapping, dtype=torch.long, device=device
-        )
-        max_seq_len = max(seq_lens)
-        pad_slot_indices = []
-        for idx in self.slot_indices:
-            pad_slot_indices.append(idx)
-            if len(idx) < max_seq_len:
-                pad_slot_indices += [[np.iinfo(np.int_).max, 0]] * (
-                    max_seq_len - len(idx)
-                )
-        slot_indices_tensor = torch.tensor(
-            self.slot_indices, dtype=torch.int64, device=device
         )
 
         return AscendMetadata(
