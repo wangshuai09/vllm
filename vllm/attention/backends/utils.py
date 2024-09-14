@@ -275,7 +275,6 @@ class CommonMetadataBuilder(AttentionMetadataBuilder[TAttentionMetadata]):
             use_cuda_graph=use_captured_graph,
         )
 
-
 class CommonAttentionState(AttentionState):
 
     def __init__(self, runner: "ModelRunnerBase"):
