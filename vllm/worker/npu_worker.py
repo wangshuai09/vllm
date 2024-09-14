@@ -1,7 +1,7 @@
 """A GPU worker class."""
 import gc
 import os
-from typing import List, Optional, Set, Tuple, Type
+from typing import Dict, List, Optional, Set, Tuple, Type
 
 import torch
 import torch.distributed
@@ -19,14 +19,16 @@ from vllm.model_executor import set_random_seed
 from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.platforms import current_platform
 from vllm.prompt_adapter.request import PromptAdapterRequest
-from vllm.sequence import ExecuteModelRequest
+from vllm.sequence import (ExecuteModelRequest, IntermediateTensors,
+                           SequenceGroupMetadata, SequenceGroupMetadataDelta)
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.embedding_model_runner import EmbeddingModelRunner
-from vllm.worker.npu_model_runner import NPUModelRunnerBase, NPUModelRunner
+from vllm.worker.npu_model_runner import NPUModelRunner
 from vllm.worker.worker_base import LocalOrDistributedWorkerBase, WorkerInput
+from vllm.worker.worker import Worker
 
 
-class NPUWorker(LocalOrDistributedWorkerBase):
+class NPUWorker(Worker):
     """A worker class that executes (a partition of) the model on a NPU.
 
     Each worker is associated with a single NPU. The worker is responsible for
@@ -49,7 +51,7 @@ class NPUWorker(LocalOrDistributedWorkerBase):
         speculative_config: Optional[SpeculativeConfig] = None,
         prompt_adapter_config: Optional[PromptAdapterConfig] = None,
         is_driver_worker: bool = False,
-        model_runner_cls: Optional[Type[NPUModelRunnerBase]] = None,
+        model_runner_cls: Optional[Type[NPUModelRunner]] = None,
         observability_config: Optional[ObservabilityConfig] = None,
     ) -> None:
         self.model_config = model_config
@@ -83,7 +85,7 @@ class NPUWorker(LocalOrDistributedWorkerBase):
                 not in ["medusa", "mlp_speculator"]) \
                     else {"return_hidden_states": True}
 
-        ModelRunnerClass: Type[NPUModelRunnerBase] = NPUModelRunner
+        ModelRunnerClass: Type[NPUModelRunner] = NPUModelRunner
         if model_runner_cls is not None:
             ModelRunnerClass = model_runner_cls
         elif self.model_config.embedding_mode:
@@ -96,7 +98,7 @@ class NPUWorker(LocalOrDistributedWorkerBase):
             "world_size": parallel_config.world_size,
             "npu_device_id": local_rank,
         }
-        self.model_runner: NPUModelRunnerBase = ModelRunnerClass(
+        self.model_runner: NPUModelRunner = ModelRunnerClass(
             model_config,
             parallel_config,
             scheduler_config,
@@ -114,8 +116,9 @@ class NPUWorker(LocalOrDistributedWorkerBase):
         # Uninitialized cache engine. Will be initialized by
         # initialize_cache.
         self.cache_engine: List[CacheEngine]
-        # Initialize npu_cache as embedding models don't initialize kv_caches
-        self.npu_cache: Optional[List[List[torch.Tensor]]] = None
+        # Initialize gpu_cache as embedding models don't initialize kv_caches
+        self.gpu_cache: Optional[List[List[torch.Tensor]]] = None
+        self._seq_group_metadata_cache: Dict[str, SequenceGroupMetadata] = {}
 
     def init_device(self) -> None:
         if self.device_config.device.type == "npu":
@@ -146,27 +149,7 @@ class NPUWorker(LocalOrDistributedWorkerBase):
         # Set random seed.
         set_random_seed(self.model_config.seed)
 
-    def load_model(self):
-        self.model_runner.load_model()
 
-    def save_sharded_state(
-        self,
-        path: str,
-        pattern: Optional[str] = None,
-        max_size: Optional[int] = None,
-    ) -> None:
-        self.model_runner.save_sharded_state(
-            path,
-            pattern=pattern,
-            max_size=max_size,
-        )
-
-    def save_tensorized_model(
-        self,
-        tensorizer_config: TensorizerConfig,
-    ) -> None:
-        self.model_runner.save_tensorized_model(
-            tensorizer_config=tensorizer_config, )
 
     @torch.inference_mode()
     def determine_num_available_blocks(self) -> Tuple[int, int]:
@@ -216,133 +199,6 @@ class NPUWorker(LocalOrDistributedWorkerBase):
         torch.npu.empty_cache()
         return num_npu_blocks, num_cpu_blocks
 
-    def initialize_cache(self, num_npu_blocks: int,
-                         num_cpu_blocks: int) -> None:
-        """Allocate NPU and CPU KV cache with the specified number of blocks.
-
-        This also warms up the model, which may record CANN graphs.
-        """
-        raise_if_cache_size_invalid(num_npu_blocks,
-                                    self.cache_config.block_size,
-                                    self.model_config.max_model_len)
-
-        self.cache_config.num_gpu_blocks = num_npu_blocks
-        self.cache_config.num_cpu_blocks = num_cpu_blocks
-
-        self._init_cache_engine()
-        self._warm_up_model()
-
-    def _init_cache_engine(self):
-        assert self.cache_config.num_gpu_blocks is not None
-        self.cache_engine = [
-            CacheEngine(self.cache_config, self.model_config,
-                        self.parallel_config, self.device_config)
-            for _ in range(self.parallel_config.pipeline_parallel_size)
-        ]
-        self.npu_cache = [
-            self.cache_engine[ve].gpu_cache
-            for ve in range(self.parallel_config.pipeline_parallel_size)
-        ]
-
-    def _warm_up_model(self) -> None:
-        if not self.model_config.enforce_eager:
-            self.model_runner.capture_model(self.npu_cache)
-        # Reset the seed to ensure that the random state is not affected by
-        # the model initialization and profiling.
-        set_random_seed(self.model_config.seed)
-
-    @property
-    def do_metadata_broadcast(self) -> bool:
-        return self.parallel_config.tensor_parallel_size > 1
-
-    @property
-    def kv_cache(self) -> Optional[List[List[torch.Tensor]]]:
-        return self.npu_cache
-
-    @torch.inference_mode()
-    def prepare_worker_input(
-            self, execute_model_req: ExecuteModelRequest) -> WorkerInput:
-        virtual_engine = execute_model_req.virtual_engine
-        num_seq_groups = len(execute_model_req.seq_group_metadata_list)
-        # `blocks_to_swap_in` and `blocks_to_swap_out` are cpu tensors.
-        # they contain parameters to launch aclrtmemcpyasync.
-        blocks_to_swap_in = torch.tensor(execute_model_req.blocks_to_swap_in,
-                                         device="cpu",
-                                         dtype=torch.int64).view(-1, 2)
-        blocks_to_swap_out = torch.tensor(execute_model_req.blocks_to_swap_out,
-                                          device="cpu",
-                                          dtype=torch.int64).view(-1, 2)
-        # `blocks_to_copy` is a npu tensor. The src and tgt of
-        # blocks to copy are in the same device, and `blocks_to_copy`
-        # can be used directly within npus.
-        blocks_to_copy = torch.tensor(execute_model_req.blocks_to_copy,
-                                      device=self.device,
-                                      dtype=torch.int64).view(-1, 2)
-
-        return WorkerInput(
-            num_seq_groups=num_seq_groups,
-            blocks_to_swap_in=blocks_to_swap_in,
-            blocks_to_swap_out=blocks_to_swap_out,
-            blocks_to_copy=blocks_to_copy,
-            virtual_engine=virtual_engine,
-        )
-
-    @torch.inference_mode()
-    def execute_worker(self, worker_input: WorkerInput) -> None:
-        virtual_engine = worker_input.virtual_engine
-        # Issue cache operations.
-        if (worker_input.blocks_to_swap_in is not None
-                and worker_input.blocks_to_swap_in.numel() > 0):
-            self.cache_engine[virtual_engine].swap_in(
-                worker_input.blocks_to_swap_in)
-        if (worker_input.blocks_to_swap_out is not None
-                and worker_input.blocks_to_swap_out.numel() > 0):
-            self.cache_engine[virtual_engine].swap_out(
-                worker_input.blocks_to_swap_out)
-        if (worker_input.blocks_to_copy is not None
-                and worker_input.blocks_to_copy.numel() > 0):
-            self.cache_engine[virtual_engine].copy(worker_input.blocks_to_copy)
-
-    def add_lora(self, lora_request: LoRARequest) -> bool:
-        return self.model_runner.add_lora(lora_request)
-
-    def remove_lora(self, lora_id: int) -> bool:
-        return self.model_runner.remove_lora(lora_id)
-
-    def pin_lora(self, lora_id: int) -> bool:
-        return self.model_runner.pin_lora(lora_id)
-
-    def list_loras(self) -> Set[int]:
-        return self.model_runner.list_loras()
-
-    def add_prompt_adapter(
-            self, prompt_adapter_request: PromptAdapterRequest) -> bool:
-        return self.model_runner.add_prompt_adapter(prompt_adapter_request)
-
-    def remove_prompt_adapter(self, prompt_adapter_id: int) -> bool:
-        return self.model_runner.remove_lora(prompt_adapter_id)
-
-    def pin_prompt_adapter(self, prompt_adapter_id: int) -> bool:
-        return self.model_runner.pin_prompt_adapter(prompt_adapter_id)
-
-    def list_prompt_adapters(self) -> Set[int]:
-        return self.model_runner.list_prompt_adapters()
-
-    @property
-    def max_model_len(self) -> int:
-        return self.model_config.max_model_len
-
-    @property
-    def vocab_size(self) -> int:
-        return self.model_runner.vocab_size
-
-    def get_cache_block_size_bytes(self) -> int:
-        """Get the size of the KV cache block size in bytes.
-        """
-        return CacheEngine.get_cache_block_size(self.cache_config,
-                                                self.model_config,
-                                                self.parallel_config)
-
 
 def init_worker_distributed_environment(
     parallel_config: ParallelConfig,
@@ -375,19 +231,3 @@ def _check_if_npu_supports_dtype(torch_dtype: torch.dtype):
     #             "`dtype` flag in CLI, for example: --dtype=half.")
     #TODO
     pass
-
-
-def raise_if_cache_size_invalid(num_npu_blocks, block_size,
-                                max_model_len) -> None:
-    if num_npu_blocks <= 0:
-        raise ValueError("No available memory for the cache blocks. "
-                         "Try increasing `gpu_memory_utilization` when "
-                         "initializing the engine.")
-    max_seq_len = block_size * num_npu_blocks
-    if max_model_len > max_seq_len:
-        raise ValueError(
-            f"The model's max seq len ({max_model_len}) "
-            "is larger than the maximum number of tokens that can be "
-            f"stored in KV cache ({max_seq_len}). Try increasing "
-            "`gpu_memory_utilization` or decreasing `max_model_len` when "
-            "initializing the engine.")

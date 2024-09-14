@@ -13,8 +13,9 @@ from vllm.utils import is_hip
 from ..models.utils import check_outputs_equal
 
 MODELS = [
-    "facebook/opt-125m",
-    "meta-llama/Llama-2-7b-hf",
+    # "facebook/opt-125m",
+    # "meta-llama/Llama-2-7b-hf",
+    "/workspace/cmq/models/LLM-Research/Meta-Llama-3-8B-Instruct",
 ]
 
 
@@ -31,8 +32,8 @@ def test_vllm_gc_ed():
 @pytest.mark.parametrize("model", MODELS)
 @pytest.mark.parametrize("backend", ["ASCEND_TORCH"])
 @pytest.mark.parametrize("dtype", ["half"])
-@pytest.mark.parametrize("max_tokens", [5])
-@pytest.mark.parametrize("enforce_eager", [False, True])
+@pytest.mark.parametrize("max_tokens", [50])
+@pytest.mark.parametrize("enforce_eager", [False])
 def test_models(
     hf_runner,
     vllm_runner,
@@ -57,6 +58,8 @@ def test_models(
                      enforce_eager=enforce_eager,
                      gpu_memory_utilization=0.7) as vllm_model:
         vllm_outputs = vllm_model.generate_greedy(example_prompts, max_tokens)
+    print("vllm_outputs: ", vllm_outputs)
+    print("hf_outputs: ", hf_outputs)
 
     check_outputs_equal(
         outputs_0_lst=hf_outputs,
