@@ -8,6 +8,7 @@ class PlatformEnum(enum.Enum):
     CUDA = enum.auto()
     ROCM = enum.auto()
     TPU = enum.auto()
+    ASCEND = enum.auto()
     UNSPECIFIED = enum.auto()
 
 
@@ -22,6 +23,9 @@ class Platform:
 
     def is_tpu(self) -> bool:
         return self._enum == PlatformEnum.TPU
+
+    def is_npu(self) -> bool:
+        return self._enum == PlatformEnum.ASCEND
 
     @staticmethod
     def get_device_capability(device_id: int = 0) -> Tuple[int, int]:

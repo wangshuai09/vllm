@@ -331,6 +331,10 @@ class ModelConfig:
                 raise ValueError(
                     f"{self.quantization} quantization is currently not "
                     f"supported in TPU Backend.")
+            if current_platform.is_npu():
+                raise NotImplementedError(
+                    "Quantization is currently not supported in Ascend backend."
+                )
             if self.quantization not in optimized_quantization_methods:
                 logger.warning(
                     "%s quantization is not fully "
