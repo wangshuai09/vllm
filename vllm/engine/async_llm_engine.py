@@ -700,6 +700,13 @@ class AsyncLLMEngine:
             else:
                 raise RuntimeError(
                     "Not supported distributed execution model on XPU device.")
+        elif engine_config.device_config.device_type == "npu":
+            if distributed_executor_backend == "ray":
+                # TODO
+                pass
+            else:
+                from vllm.executor.npu_executor import NPUExecutorAsync
+                executor_class = NPUExecutorAsync
         elif distributed_executor_backend == "ray":
             initialize_ray_cluster(engine_config.parallel_config)
             from vllm.executor.ray_gpu_executor import RayGPUExecutorAsync
@@ -1020,7 +1027,7 @@ class AsyncLLMEngine:
             request_id: The unique id of the request.
             lora_request: LoRA request to use for generation, if any.
             trace_headers: OpenTelemetry trace headers.
-            prompt_adapter_request: Prompt Adapter request to use 
+            prompt_adapter_request: Prompt Adapter request to use
                                             for generation, if any.
 
         Yields:
