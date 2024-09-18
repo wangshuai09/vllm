@@ -15,7 +15,6 @@ from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadataBuilder)
 from vllm.attention.backends.utils import (PAD_SLOT_ID, CommonAttentionState,
                                            CommonMetadataBuilder,
-                                           compute_slot_mapping,
                                            compute_slot_mapping_start_idx,
                                            is_block_tables_empty)
 from vllm.attention.ops.paged_attn import PagedAttention, PagedAttentionMetadata
@@ -27,30 +26,6 @@ from vllm.utils import make_tensor_with_pad
 SHARE_MASK_TRIL_PREFIX_CACHE = None
 SHARE_MASK_TRIL = None
 
-
-def compute_npu_slot_mapping(is_profile_run, slot_mapping, seq_id, seq_len,
-                             context_len, start_idx, block_size, block_tables,
-                             max_query_len):
-    """
-    compute slot mapping
-    """
-    if is_profile_run:
-        slot_mapping.extend([[PAD_SLOT_ID, PAD_SLOT_ID]] * seq_len)
-        return
-
-    padding_mask_len = max(0, start_idx - context_len)
-    slot_mapping.extend([[PAD_SLOT_ID, PAD_SLOT_ID]] * padding_mask_len)
-
-    range_start = max(start_idx, context_len)
-    range_end = seq_len
-    block_table = block_tables[seq_id]
-
-    for i in range(range_start, range_end):
-        block_number = block_table[i // block_size]
-        block_offset = i % block_size
-        slot_mapping.append([block_number, block_offset])
-
-    slot_mapping.extend([[np.iinfo(np.int_).max, 0]] * (max_query_len - range_end + range_start))
 
 class AscendAttentionBackend(AttentionBackend):
 
@@ -73,7 +48,6 @@ class AscendAttentionBackend(AttentionBackend):
         num_kv_heads: int,
         head_size: int,
     ) -> Tuple[int, ...]:
-        # return (2, num_blocks, block_size, num_kv_heads * head_size)
         return (2, num_blocks, block_size, num_kv_heads * head_size)
 
     @staticmethod
@@ -97,7 +71,6 @@ class AscendAttentionBackend(AttentionBackend):
         # TODO (cmq): check me
         key_caches = kv_caches[0]
         value_caches = kv_caches[1]
-        layers = len(key_caches)
         for src_id, dsts in src_to_dists.items():
             for dst_id in dsts:
                 key_caches[:][dst_id] = key_caches[:][src_id]
@@ -122,21 +95,14 @@ class AscendPagedAttention(PagedAttention):
         value_cache: torch.Tensor,
         slot_indices: torch.Tensor,
     ) -> None:
-        # batch_size, seq_len, slot_dim = slot_indices.shape
-        # key = key.view(batch_size, seq_len, key_cache.shape[-1])
-        # value = value.view(batch_size, seq_len, value_cache.shape[-1])
-        # torch_npu.npu_scatter_nd_update_(key_cache, slot_indices, key)
-        # torch_npu.npu_scatter_nd_update_(value_cache, slot_indices, value)
-        cast_key = key.view(-1, key.shape[-1])
-        cast_value = value.view(-1, value.shape[-1])
-        torch_npu.npu_scatter_nd_update_(key_cache, slot_indices, cast_key)
-        torch_npu.npu_scatter_nd_update_(value_cache, slot_indices, cast_value)
+        torch_npu.npu_scatter_nd_update_(key_cache, slot_indices, key)
+        torch_npu.npu_scatter_nd_update_(value_cache, slot_indices, value)
 
 
 @dataclass(kw_only=True)
 class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
-    """Metadata for XFormersbackend.
-
+    """Metadata for Ascendbackend.
+        * modified from XFormersbackend
     NOTE: Any python object stored here is not updated when it is
     cuda-graph replayed. If you have values that need to be changed
     dynamically, it should be stored in tensor. The tensor has to be
@@ -208,8 +174,10 @@ class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
     pse_shift: Optional[torch.Tensor] = None
     sparse_mode: int = 0
 
+    slot_mapping: Optional[torch.Tensor] = None
+
     @property
-    def prefill_metadata(self) -> Optional["XFormersMetadata"]:
+    def prefill_metadata(self) -> Optional["AscendMetadata"]:
         if self.num_prefills == 0:
             return None
 
@@ -302,6 +270,45 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
 
     _metadata_cls = AscendMetadata
 
+    def compute_npu_slot_indices(self, is_profile_run, slot_indices, seq_id, seq_len,
+                                context_len, start_idx, block_size, block_tables,
+                                max_query_len):
+        """
+        compute slot indices
+
+        slot mapping in other backend of vllm stores slot indices,
+        which are indicates by `block_number * block_size + block_offset`
+
+        In Ascend backend, slot mapping stores [block_number, block_offset].
+        To distinguish this, slot_indices is used in this func
+        """
+        if is_profile_run:
+            # During memory profiling, the block tables are not
+            # initialized yet. In this case, we just use a dummy
+            # slot mapping.
+            # In embeddings, the block tables are {seq_id: None}.
+            slot_indices.extend([[PAD_SLOT_ID, 0]] * seq_len)
+            return
+        # Mask the [0, start_idx) tokens of the prompt with
+        # [PAD_SLOT_ID, 0], where start_idx is max(0, seq_len -
+        # sliding_window). For example, if the prompt len is 10,
+        # sliding window is 8, and block size is 4, the first two
+        # tokens are masked and the slot mapping will be
+        # [-1, -1, 2, 3, 4, 5, 6, 7, 0, 1].
+        padding_mask_len = max(0, start_idx - context_len)
+        slot_indices.extend([[PAD_SLOT_ID, 0]] * padding_mask_len)
+
+        range_start = max(start_idx, context_len)
+        range_end = seq_len
+        numel = range_end - range_start
+        block_table = block_tables[seq_id]
+
+        for i in range(range_start, range_end):
+            block_number = block_table[i // block_size]
+            block_offset = i % block_size
+            slot_indices.append([block_number, block_offset])
+        slot_indices.extend([[PAD_SLOT_ID, 0]] * (max_query_len - numel))
+
     def _add_seq_group(
         self,
         inter_data: "ModelInputForNPUBuilder.InterDataForSeqGroup",
@@ -315,7 +322,6 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
         is_prompt = inter_data.is_prompt
         block_tables = inter_data.block_tables
         max_query_len = max(max(data.query_lens) for data in self.input_builder.inter_data_list)
-        print("max_query_len", max_query_len)
 
         is_prompt = inter_data.is_prompt
         block_tables = inter_data.block_tables
@@ -357,7 +363,7 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
                 is_prompt, query_len, context_len, self.sliding_window,
                 self.use_v2_block_manager)
 
-            compute_npu_slot_mapping(is_profile_run, self.slot_mapping, seq_id, seq_len,
+            self.compute_npu_slot_indices(is_profile_run, self.slot_mapping, seq_id, seq_len,
                                      context_len, start_idx, self.block_size, inter_data.block_tables,
                                      max_query_len)
 
@@ -387,15 +393,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
 
-    def attn_free_mask_pfa(self):
-        global SHARE_MASK_TRIL_PREFIX_CACHE
-        if SHARE_MASK_TRIL_PREFIX_CACHE is None:
-            SHARE_MASK_TRIL_PREFIX_CACHE = torch.triu(
-                torch.ones(1, 1, 2048, 2048, dtype=bool, device="npu"),
-                diagonal=1,
-            )
-        return SHARE_MASK_TRIL_PREFIX_CACHE
-
     def forward(
         self,
         query: torch.Tensor,
@@ -411,11 +408,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         """Forward pass with Ascend attention.
 
         Args:
-            query: shape = [batch_size, seq_len * num_heads * head_size]
-            key: shape = [batch_size, seq_len * num_kv_heads * head_size]
-            value: shape = [batch_size, seq_len * num_kv_heads * head_size]
-            key_cache = [num_blocks, block_size, num_kv_heads * head_size]
-            value_cache = [num_blocks, block_size, num_kv_heads * head_size]
+            query: shape = [num_tokens, num_heads * head_size]
+                   num_tokens = batch_size * seq_len
+            key: shape = [num_tokens, num_kv_heads * head_size]
+            value: shape = [num_tokens, num_kv_heads * head_size]
+            kv_cache: shape = [2, num_blocks, block_size, num_kv_heads * head_size]
+                      key_cache   [num_blocks, block_size, num_kv_heads * head_size]
+                      value_cache [num_blocks, block_size, num_kv_heads * head_size]
             attn_metadata: Metadata for attention.
         Returns:
             shape = [batch_size, seq_len * num_heads * head_size]
@@ -429,7 +428,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 "PallasAttentionBackendImpl"
             )
         # view q k v to BSH
-        batch_size = query.shape[0]
+        num_tokens = query.shape[0]
 
         if kv_cache is not None:
             if attn_metadata.num_prefills > 0:
@@ -446,28 +445,14 @@ class AscendAttentionBackendImpl(AttentionImpl):
             )
 
         if attn_metadata.num_prefills > 0:
-            # TODO (cmq): modify attn_metadata.sparse_mode, attention_mask ...
-            # add ENV var to turn on/off maskfree_attn and change 16384
-            if attn_metadata.attn_mask is None and query.shape[0] > 16384:
-                attn_metadata.attn_mask = self.attn_free_mask_pfa()
-                attn_metadata.sparse_mode = 2
-
             if attn_metadata.attn_mask is None:
-                query_len = attn_metadata.seq_lens_tensor
-                kv_len = torch.zeros_like(query_len).to(torch.long)
+                if num_tokens > 16384:
+                    attn_metadata.sparse_mode = 2
                 attention_mask = gen_input_mask(
-                    len(attn_metadata.seq_lens),
                     attn_metadata.max_prefill_seq_len,
-                    query_len,
-                    kv_len,
+                    self.sliding_window,
+                    num_tokens
                 )
-
-                if self.sliding_window is not None:
-                    attention_mask = ~attention_mask
-                    attention_mask = torch.triu(
-                        attention_mask, diagonal=1 - self.sliding_window
-                    )
-                    attention_mask = ~attention_mask
                 attn_metadata.attn_mask = attention_mask
 
             if self.alibi_slopes is not None and attn_metadata.pse_shift is None:
@@ -476,7 +461,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     self.num_kv_heads,
                     dtype=query.dtype,
                     seq_len=attn_metadata.max_prefill_seq_len,
-                    batch_size=batch_size,
+                    batch_size=num_tokens,
                 )
 
             # shape of q/k/v [B,S*H] --> [B,S,N,D]
@@ -506,14 +491,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 sparse_mode=attn_metadata.sparse_mode,
             )
             output = output.transpose(1, 2).reshape(
-                batch_size, -1, self.num_heads * self.head_size
+                num_tokens, -1, self.num_heads * self.head_size
             )
 
         elif decode_meta := attn_metadata.decode_metadata:
             # FA for decoding phase
             assert kv_cache is not None
             # shape of query [B,S*H] --> [B,S,H]
-
             query = query.view(
                 -1,
                 1,
@@ -538,29 +522,36 @@ class AscendAttentionBackendImpl(AttentionImpl):
         return output
 
 
-def gen_input_mask(
-    batch_size, seq_len, query_len: torch.LongTensor, kv_len: torch.LongTensor
-):
+def gen_input_mask(seq_len, sliding_window, len):
     """
     Generating lower triangular matrix
     """
-    global SHARE_MASK_TRIL
-    if SHARE_MASK_TRIL is None or SHARE_MASK_TRIL.shape[0] < seq_len:
-        SHARE_MASK_TRIL = ~torch.tril(
-            torch.ones(seq_len, seq_len, dtype=bool, device="npu")
-        )
-    range_idx = torch.arange(seq_len, device=query_len.device).expand(batch_size, -1)
-    select_idx = range_idx + kv_len.unsqueeze(1)
-    attn_mask = torch.index_select(
-        SHARE_MASK_TRIL, index=select_idx.view(-1), dim=0
-    ).view(batch_size, seq_len, -1)
-    padding_idx = range_idx >= query_len.unsqueeze(1)
-    padding_idx = padding_idx.unsqueeze(2)
-    attn_mask = attn_mask.masked_fill(padding_idx, 1)
-    q_len = attn_mask.shape[1]
-    attn_mask = attn_mask[:, :, :q_len]
+    if len > 16384:
+        # TODO (cmq): test me
+        # improve computing performance on NPU when input tokens are huge
+        global SHARE_MASK_TRIL_PREFIX_CACHE
+        if SHARE_MASK_TRIL_PREFIX_CACHE is None:
+            SHARE_MASK_TRIL_PREFIX_CACHE = torch.triu(
+                torch.ones(1, 1, 2048, 2048, dtype=bool, device="npu"),
+                diagonal=1,
+            )
+        attention_mask = SHARE_MASK_TRIL_PREFIX_CACHE
+    else:
+        global SHARE_MASK_TRIL
+        if SHARE_MASK_TRIL is None or SHARE_MASK_TRIL.shape[0] < seq_len:
+            SHARE_MASK_TRIL = ~torch.tril(
+                torch.ones(seq_len, seq_len, dtype=bool, device="npu")
+            )
 
-    return attn_mask.unsqueeze(1)[0].unsqueeze(0)
+        attention_mask = SHARE_MASK_TRIL
+        if sliding_window is not None:
+            attention_mask = ~attention_mask
+            attention_mask = torch.triu(
+                attention_mask, diagonal=1 - sliding_window
+            )
+            attention_mask = ~attention_mask
+
+    return attention_mask
 
 
 def _make_alibi_bias(
