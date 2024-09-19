@@ -50,7 +50,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
 from vllm.utils import (DeviceMemoryProfiler, flatten_2d_lists,
                         get_kv_cache_torch_dtype, is_hip,
-                        is_pin_memory_available, is_mindie, is_npu,
+                        is_pin_memory_available, is_mindie,
                         make_tensor_with_pad)
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase, ModelRunnerInputBuilderBase,

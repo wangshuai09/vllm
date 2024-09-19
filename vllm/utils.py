@@ -31,6 +31,7 @@ from typing_extensions import ParamSpec, TypeIs, assert_never
 
 import vllm.envs as envs
 from vllm.logger import enable_trace_function_call, init_logger
+from vllm.platforms import current_platform
 
 logger = init_logger(__name__)
 
@@ -354,14 +355,6 @@ def is_xpu() -> bool:
         logger.warning("not found ipex lib")
         return False
     return hasattr(torch, "xpu") and torch.xpu.is_available()
-
-@lru_cache(maxsize=None)
-def is_npu() -> bool:
-    try:
-        import torch_npu
-    except ImportError:
-        torch_npu = None
-    return torch_npu is not None
 
 
 @lru_cache(maxsize=None)
@@ -770,7 +763,7 @@ class DeviceMemoryProfiler:
         elif is_xpu():
             torch.xpu.reset_peak_memory_stats(self.device)  # type: ignore
             mem = torch.xpu.max_memory_allocated(self.device)  # type: ignore
-        elif is_npu():
+        elif current_platform.is_npu():
             torch.npu.reset_peak_memory_stats(self.device)  # type: ignore
             mem = torch.npu.max_memory_allocated(self.device)  # type: ignore
         return mem

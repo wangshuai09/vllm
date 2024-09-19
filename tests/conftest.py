@@ -33,7 +33,9 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sequence import SampleLogprobs
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, cuda_device_count_stateless,
-                        identity, is_cpu, is_npu)
+                        identity, is_cpu)
+from vllm.platforms import current_platform
+
 
 logger = init_logger(__name__)
 
@@ -213,7 +215,7 @@ class HfRunner:
             if hasattr(input, 'device') and input.device.type == "cpu":
                 return input  # Already on CPU, no need to move
             return input.to("cpu")
-        elif is_npu():
+        elif current_platform.is_npu():
             # Check if the input is already on the NPU
             if hasattr(input, 'device') and input.device.type == "npu":
                 return input  # Already on GPU, no need to move

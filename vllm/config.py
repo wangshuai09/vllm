@@ -18,7 +18,7 @@ from vllm.transformers_utils.config import (ConfigFormat, get_config,
                                             get_hf_text_config)
 from vllm.utils import (STR_NOT_IMPL_ENC_DEC_CUDAGRAPH, GiB_bytes,
                         cuda_device_count_stateless, get_cpu_memory, is_cpu,
-                        is_hip, is_neuron, is_npu, is_openvino, is_xpu,
+                        is_hip, is_neuron, is_openvino, is_xpu,
                         print_warning_once)
 
 if TYPE_CHECKING:
@@ -1071,7 +1071,7 @@ class DeviceConfig:
                 self.device_type = "cpu"
             elif is_xpu():
                 self.device_type = "xpu"
-            elif is_npu():
+            elif current_platform.is_npu():
                 self.device_type = "npu"
             else:
                 # We don't call torch.cuda.is_available() here to

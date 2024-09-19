@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 from vllm.platforms import current_platform
-from vllm.utils import is_cpu, is_hip, is_npu, is_xpu
+from vllm.utils import is_cpu, is_hip, is_xpu
 
 
 class CustomOp(nn.Module):
@@ -68,7 +68,7 @@ class CustomOp(nn.Module):
             return self.forward_tpu
         elif is_xpu():
             return self.forward_xpu
-        elif is_npu():
+        elif current_platform.is_npu():
             return self.forward_npu
         else:
             return self.forward_cuda
