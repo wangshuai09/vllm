@@ -99,7 +99,7 @@ class AscendPagedAttention(PagedAttention):
         torch_npu.npu_scatter_nd_update_(value_cache, slot_indices, value)
 
 
-@dataclass(kw_only=True)
+@dataclass
 class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
     """Metadata for Ascendbackend.
         * modified from XFormersbackend
@@ -174,7 +174,7 @@ class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
     pse_shift: Optional[torch.Tensor] = None
     sparse_mode: int = 0
 
-    slot_mapping: Optional[torch.Tensor] = None
+    # slot_mapping: Optional[torch.Tensor] = None
 
     @property
     def prefill_metadata(self) -> Optional["AscendMetadata"]:
