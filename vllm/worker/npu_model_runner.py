@@ -33,8 +33,6 @@ from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.model_executor import SamplingMetadata
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.model_executor.model_loader import get_model
-from vllm.model_executor.model_loader.ascend_mindie import (
-    get_mindie_model, model_supports_in_mindie)
 from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.model_executor.models.interfaces import (supports_lora,
                                                    supports_multimodal)
@@ -50,8 +48,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
 from vllm.utils import (DeviceMemoryProfiler, flatten_2d_lists,
                         get_kv_cache_torch_dtype, is_hip,
-                        is_pin_memory_available, is_mindie,
-                        make_tensor_with_pad)
+                        is_pin_memory_available, make_tensor_with_pad)
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase, ModelRunnerInputBuilderBase,
     _add_attn_metadata_broadcastable_dict,
@@ -80,7 +77,7 @@ _NUM_WARMUP_ITERS = 2
 
 TModelInputForNPU = TypeVar('TModelInputForNPU', bound="ModelInputForNPU")
 
-#TODO: 直接继承GPUINPUT相关类
+
 @dataclass(frozen=True)
 class ModelInputForNPU(ModelInputForGPU):
     """
@@ -303,14 +300,8 @@ class NPUModelRunner(ModelRunner):
         return model_input
 
     def model_router(self) -> None:
-        # TODO: model_support_in_mindie, get_mindie_model
-        if is_mindie() and model_supports_in_mindie(self.model_config):
-            self.model = get_mindie_model(self.model_config,
-                                          self.device_config,
-                                          self.load_config,
-                                          self.mindie_model_config)
-        else:
-            self.get_vllm_model()
+        # TODO: goto mindie_model when is_mindie() and model_supports_in_mindie()
+        self.get_vllm_model()
 
     def load_model(self) -> None:
         self.model_router()

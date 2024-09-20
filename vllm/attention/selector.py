@@ -10,8 +10,7 @@ import vllm.envs as envs
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
-from vllm.utils import STR_BACKEND_ENV_VAR, is_cpu, is_hip, is_mindie, is_openvino, is_xpu
-from vllm.model_executor.model_loader.ascend_mindie import model_supports_in_mindie
+from vllm.utils import STR_BACKEND_ENV_VAR, is_cpu, is_hip, is_openvino, is_xpu
 
 logger = init_logger(__name__)
 
@@ -25,8 +24,7 @@ class _Backend(enum.Enum):
     FLASHINFER = enum.auto()
     PALLAS = enum.auto()
     IPEX = enum.auto()
-    ASCEND_TORCH = enum.auto()
-    ASCEND_MINDIE = enum.auto()
+    ASCEND = enum.auto()
 
 
 def backend_name_to_enum(backend_name: str) -> _Backend:
@@ -149,23 +147,10 @@ def get_attn_backend(
         logger.info("Using Pallas backend.")
         from vllm.attention.backends.pallas import PallasAttentionBackend
         return PallasAttentionBackend
-    # TODO
-    # MINDIE 和 Torch_NPU 同一个backend还是不同的backend
-    # elif backend == _Backend.Ascend_MINDIE:
-    #     from vllm.attention.backends.ascend import AscendAttentionBackend
-    #     return AscendAttentionBackend
-    # elif backend == _Backend.Ascend_TORCH:
-    #     from vllm.attention.backends.ascend import AscendAttentionBackend
-    #     return AscendAttentionBackend
-    elif backend == _Backend.ASCEND_TORCH:
-        logger.info("Using ASCEND_TORCH backend.")
-        # from vllm.attention.backends.ascend import AscendTorchAttentionBackend
-        # return AscendTorchAttentionBackend
+    elif backend == _Backend.ASCEND:
+        logger.info("Using ASCEND backend.")
         from vllm.attention.backends.ascend import AscendAttentionBackend
         return AscendAttentionBackend
-    elif backend == _Backend.ASCEND_MINDIE:
-        from vllm.attention.backends.ascend_mindie import AscendMindIEBackend
-        return AscendMindIEBackend
     else:
         raise ValueError("Invalid attention backend.")
 
@@ -231,13 +216,11 @@ def which_attn_to_use(
         return _Backend.ROCM_FLASH
 
     if current_platform.is_npu():
-        # TODO: torch and mindie
         # Ascend NPU
-        if selected_backend not in (_Backend.ASCEND_TORCH, _Backend.ASCEND_MINDIE):
+        # TODO: mindie
+        if selected_backend != _Backend.ASCEND:
             logger.info("Cannot use %s backend on NPU.", selected_backend)
-        if is_mindie() and model_supports_in_mindie():
-            return _Backend.ASCEND_MINDIE
-        return _Backend.ASCEND_TORCH
+        return _Backend.ASCEND
     # FlashAttn in NVIDIA GPUs.
     if selected_backend == _Backend.FLASH_ATTN:
         if current_platform.get_device_capability()[0] < 8:

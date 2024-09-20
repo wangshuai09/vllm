@@ -266,7 +266,7 @@ class LRUCache(Generic[T]):
 
 
 class PyObjectCache:
-    """Used to cache python objects to avoid object allocations 
+    """Used to cache python objects to avoid object allocations
     across scheduler iterations.
     """
 
@@ -285,7 +285,7 @@ class PyObjectCache:
             self._obj_cache.append(self._obj_builder())
 
     def get_object(self):
-        """Returns a pre-allocated cached object. If there is not enough 
+        """Returns a pre-allocated cached object. If there is not enough
         objects, then the cache size will double.
         """
         if self._index >= len(self._obj_cache):
@@ -355,12 +355,6 @@ def is_xpu() -> bool:
         logger.warning("not found ipex lib")
         return False
     return hasattr(torch, "xpu") and torch.xpu.is_available()
-
-
-@lru_cache(maxsize=None)
-def is_mindie() -> bool:
-    # TODO
-    return False
 
 
 @lru_cache(maxsize=None)
@@ -1127,10 +1121,10 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
     def _pull_args_from_config(args: List[str]) -> List[str]:
         """Method to pull arguments specified in the config file
         into the command-line args variable.
-        
-        The arguments in config file will be inserted between 
+
+        The arguments in config file will be inserted between
         the argument list.
-        
+
         example:
         ```yaml
             port: 12323
@@ -1141,21 +1135,21 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
             --config config.yaml -tp 2
         $: args = [
             "serve,chat,complete",
-            "facebook/opt-12B", 
-            '--config', 'config.yaml', 
+            "facebook/opt-12B",
+            '--config', 'config.yaml',
             '-tp', '2'
         ]
         $: args = [
             "serve,chat,complete",
-            "facebook/opt-12B", 
-            '--port', '12323', 
-            '--tensor-parallel-size', '4', 
+            "facebook/opt-12B",
+            '--port', '12323',
+            '--tensor-parallel-size', '4',
             '-tp', '2'
             ]
         ```
 
         Please note how the config args are inserted after the sub command.
-        this way the order of priorities is maintained when these are args 
+        this way the order of priorities is maintained when these are args
         parsed by super().
         """
         assert args.count(
@@ -1181,7 +1175,7 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
 
     @staticmethod
     def _load_config_file(file_path: str) -> List[str]:
-        """Loads a yaml file and returns the key value pairs as a 
+        """Loads a yaml file and returns the key value pairs as a
         flattened list with argparse like pattern
         ```yaml
             port: 12323
@@ -1192,7 +1186,7 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
                 '--port': '12323',
                 '--tensor-parallel-size': '4'
             ]
-        
+
         """
 
         extension: str = file_path.split('.')[-1]
