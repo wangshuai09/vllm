@@ -39,6 +39,7 @@ from vllm.model_executor.models.interfaces import (supports_lora,
 from vllm.model_executor.models.utils import set_cpu_offload_max_bytes
 from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensorInputs,
                              MultiModalInputs, MultiModalRegistry)
+from vllm.platforms import current_platform
 from vllm.prompt_adapter.layers import PromptAdapterMapping
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.prompt_adapter.worker_manager import (
@@ -439,7 +440,7 @@ class NPUModelRunner(ModelRunner):
                 dtype=self.model_config.dtype,
                 device=self.device)
         self.execute_model(model_input, kv_caches, intermediate_tensors)
-        torch.npu.synchronize()
+        current_platform.synchronize()
         return
 
     @torch.inference_mode()

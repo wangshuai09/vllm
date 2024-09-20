@@ -33,3 +33,27 @@ class AscendPlatform(Platform):
     @staticmethod
     def inference_mode():
         return torch.no_grad()
+
+    @staticmethod
+    def set_device(device: torch.device) -> torch.device:
+        torch.npu.set_device(device)
+
+    @staticmethod
+    def empty_cache():
+        torch.npu.empty_cache()
+
+    @staticmethod
+    def synchronize():
+        torch.npu.synchronize()
+
+    @staticmethod
+    def mem_get_info() -> Tuple[int, int]:
+        return torch.npu.mem_get_info()
+
+    @staticmethod
+    def reset_peak_memory_stats(device: torch.device):
+        torch.npu.reset_peak_memory_stats(device)
+
+    @staticmethod
+    def max_memory_allocated(device: torch.device) -> int:
+        return torch.npu.max_memory_allocated(device)

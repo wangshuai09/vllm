@@ -133,11 +133,11 @@ class NPUWorker(Worker):
             # # This env var set by Ray causes exceptions with graph building.
             # os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
             self.device = torch.device(f"npu:{self.local_rank}")
-            torch.npu.set_device(self.device)
+            current_platform.set_device(self.device)
 
             _check_if_npu_supports_dtype(self.model_config.dtype)
-            torch.npu.empty_cache()
-            self.init_npu_memory = torch.npu.mem_get_info()[0]
+            current_platform.empty_cache()
+            self.init_npu_memory = current_platform.mem_get_info()[0]
         else:
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
@@ -166,7 +166,7 @@ class NPUWorker(Worker):
         """
         # Profile the memory usage of the model and get the maximum number of
         # cache blocks that can be allocated with the remaining free memory.
-        torch.npu.empty_cache()
+        current_platform.empty_cache()
 
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
@@ -174,8 +174,8 @@ class NPUWorker(Worker):
 
         # Calculate the number of blocks that can be allocated with the
         # profiled peak memory.
-        torch.npu.synchronize()
-        free_npu_memory, total_npu_memory = torch.npu.mem_get_info()
+        current_platform.synchronize()
+        free_npu_memory, total_npu_memory = current_platform.mem_get_info()
         # NOTE(woosuk): Here we assume that the other processes using the same
         # GPU did not change their memory usage during the profiling.
         peak_memory = self.init_npu_memory - free_npu_memory
@@ -196,7 +196,7 @@ class NPUWorker(Worker):
         if self.model_runner.lora_manager:
             self.model_runner.remove_all_loras()
         gc.collect()
-        torch.npu.empty_cache()
+        current_platform.empty_cache()
         return num_npu_blocks, num_cpu_blocks
 
 
