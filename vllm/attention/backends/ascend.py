@@ -59,15 +59,16 @@ class AscendAttentionBackend(AttentionBackend):
     @staticmethod
     def copy_blocks(
         kv_caches: List[torch.Tensor],
-        src_to_dists: Dict[int, List[int]],
+        src_to_dists: torch.Tensor,
     ) -> None:
-        # TODO (cmq): check me
-        key_caches = kv_caches[0]
-        value_caches = kv_caches[1]
-        for src_id, dsts in src_to_dists.items():
-            for dst_id in dsts:
-                key_caches[:][dst_id] = key_caches[:][src_id]
-                value_caches[:][dst_id] = value_caches[:][src_id]
+        src_indices = src_to_dists[:, 0]
+        dst_indices = src_to_dists[:, 1]
+
+        for kv_cache in kv_caches:
+            key_caches = kv_cache[0]
+            value_caches = kv_cache[1]
+            key_caches[dst_indices] = key_caches[src_indices]
+            value_caches[dst_indices] = value_caches[src_indices]
 
     @staticmethod
     def get_builder_cls() -> Type["AscendMetadataBuilder"]:
