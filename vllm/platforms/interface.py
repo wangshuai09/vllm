@@ -60,7 +60,9 @@ class UnspecifiedPlatform(Platform):
 
 class PlatformMemoryProfiler:
 
-    def __init__(self, platform, device: Optional[torch.types.Device] = None):
+    def __init__(self,
+                 platform: Platform,
+                 device: Optional[torch.types.Device] = None):
         self.device = device
         self.platform = platform
 

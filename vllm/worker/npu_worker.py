@@ -1,11 +1,9 @@
-"""A GPU worker class."""
+"""A NPU worker class."""
 import gc
-import os
-from typing import Dict, List, Optional, Set, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import torch
 import torch.distributed
-import torch_npu
 
 from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
                          ModelConfig, ObservabilityConfig, ParallelConfig,
@@ -14,17 +12,12 @@ from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
                               set_custom_all_reduce)
-from vllm.lora.request import LoRARequest
 from vllm.model_executor import set_random_seed
-from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.platforms import current_platform
-from vllm.prompt_adapter.request import PromptAdapterRequest
-from vllm.sequence import (ExecuteModelRequest, IntermediateTensors,
-                           SequenceGroupMetadata, SequenceGroupMetadataDelta)
+from vllm.sequence import SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.embedding_model_runner import EmbeddingModelRunner
 from vllm.worker.npu_model_runner import NPUModelRunner
-from vllm.worker.worker_base import LocalOrDistributedWorkerBase, WorkerInput
 from vllm.worker.worker import Worker
 
 
@@ -142,16 +135,13 @@ class NPUWorker(Worker):
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
         # Initialize the distributed environment.
-        # TODO:HCCL 适配
         init_worker_distributed_environment(self.parallel_config, self.rank,
                                             self.distributed_init_method,
                                             self.local_rank)
         # Set random seed.
         set_random_seed(self.model_config.seed)
 
-
-
-    @torch.inference_mode()
+    @current_platform.inference_mode()
     def determine_num_available_blocks(self) -> Tuple[int, int]:
         """Profiles the peak memory usage of the model to determine how many
         KV blocks may be allocated without OOMs.
@@ -196,6 +186,8 @@ class NPUWorker(Worker):
         if self.model_runner.lora_manager:
             self.model_runner.remove_all_loras()
         gc.collect()
+        # TODO: don`t need impl this func after empty_cache in
+        # Worker.determine_num_available_blocks() unified`
         current_platform.empty_cache()
         return num_npu_blocks, num_cpu_blocks
 
@@ -219,15 +211,5 @@ def init_worker_distributed_environment(
 
 def _check_if_npu_supports_dtype(torch_dtype: torch.dtype):
     # Check if the NPU supports the dtype.
-    # if torch_dtype == torch.bfloat16:
-    #     compute_capability = current_platform.get_device_capability()
-    #     if compute_capability[0] < 8:
-    #         gpu_name = torch.cuda.get_device_name()
-    #         raise ValueError(
-    #             "Bfloat16 is only supported on GPUs with compute capability "
-    #             f"of at least 8.0. Your {gpu_name} GPU has compute capability "
-    #             f"{compute_capability[0]}.{compute_capability[1]}. "
-    #             "You can use float16 instead by explicitly setting the"
-    #             "`dtype` flag in CLI, for example: --dtype=half.")
-    #TODO
+    # TODO
     pass

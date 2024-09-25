@@ -1,4 +1,4 @@
-from typing import List, Optional, Callable, Type, Dict, Tuple
+from typing import List, Optional, Callable, Type, Tuple
 
 from vllm.executor.executor_base import ExecutorAsyncBase
 from vllm.executor.gpu_executor import GPUExecutor
@@ -6,7 +6,7 @@ from vllm.logger import init_logger
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.sequence import ExecuteModelRequest
 from vllm.utils import make_async
-from vllm.worker.worker_base import WorkerBase, WorkerWrapperBase
+from vllm.worker.worker_base import WorkerBase
 
 logger = init_logger(__name__)
 
@@ -14,7 +14,6 @@ logger = init_logger(__name__)
 class NPUExecutor(GPUExecutor):
 
     def _init_executor(self) -> None:
-        # TODO: 这两个参数作用
         assert not self.scheduler_config.chunked_prefill_enabled, (
             "Chunked prefill is not yet supported for NPU backend")
         assert not self.speculative_config, (
@@ -25,8 +24,6 @@ class NPUExecutor(GPUExecutor):
         self.driver_worker.init_device()
         self.driver_worker.load_model()
 
-
-    # 输出格式是否要改变？？
     def execute_model(
             self,
             execute_model_req: ExecuteModelRequest) -> List[SamplerOutput]:

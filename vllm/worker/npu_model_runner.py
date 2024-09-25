@@ -1,44 +1,27 @@
 import dataclasses
-import gc
-import time
-import warnings
-import weakref
 from dataclasses import dataclass
-from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Type,
-                    TypeVar, Union)
+from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Set, Type,
+                    TypeVar)
 
-import numpy as np
 import torch
 import torch.distributed
-import torch.nn as nn
 
 
-BatchDecodeWithPagedKVCacheWrapper = None
-CUDAGraphBatchDecodeWithPagedKVCacheWrapper = None
-BatchPrefillWithPagedKVCacheWrapper = None
-FLASHINFER_WORKSPACE_BUFFER_SIZE = 0
-
-import vllm.envs as envs
-from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
                          ModelConfig, ObservabilityConfig, ParallelConfig,
                          PromptAdapterConfig, SchedulerConfig)
 from vllm.distributed import get_pp_group
-from vllm.distributed.parallel_state import graph_capture
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.model_executor import SamplingMetadata
-from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.model_executor.model_loader import get_model
-from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.model_executor.models.interfaces import (supports_lora,
                                                    supports_multimodal)
-from vllm.model_executor.models.utils import set_cpu_offload_max_bytes
-from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensorInputs,
-                             MultiModalInputs, MultiModalRegistry)
+from vllm.multimodal import (MULTIMODAL_REGISTRY, MultiModalInputs,
+                             MultiModalRegistry)
 from vllm.platforms import current_platform
 from vllm.prompt_adapter.layers import PromptAdapterMapping
 from vllm.prompt_adapter.request import PromptAdapterRequest
@@ -46,16 +29,8 @@ from vllm.prompt_adapter.worker_manager import (
     LRUCacheWorkerPromptAdapterManager)
 
 from vllm.sampling_params import SamplingParams
-from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
-from vllm.utils import (flatten_2d_lists,
-                        get_kv_cache_torch_dtype, is_hip,
-                        is_pin_memory_available, make_tensor_with_pad)
-from vllm.worker.model_runner_base import (
-    ModelRunnerBase, ModelRunnerInputBase, ModelRunnerInputBuilderBase,
-    _add_attn_metadata_broadcastable_dict,
-    _add_sampling_metadata_broadcastable_dict,
-    _init_attn_metadata_from_tensor_dict,
-    _init_sampling_metadata_from_tensor_dict)
+from vllm.sequence import SequenceGroupMetadata
+from vllm.utils import (flatten_2d_lists, make_tensor_with_pad)
 from vllm.worker.model_runner import ModelInputForGPU, ModelInputForGPUBuilder, ModelInputForGPUWithSamplingMetadata, GPUModelRunnerBase, ModelRunner
 
 if TYPE_CHECKING:
@@ -64,17 +39,6 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 LORA_WARMUP_RANK = 8
-_BATCH_SIZE_ALIGNMENT = 8
-# all the token sizes that **can** be captured by cudagraph.
-# they can be arbitrarily large.
-# currently it includes: 1, 2, 4, 8, 16, 24, 32, 40, ..., 8192.
-# the actual sizes to capture will be determined by the model,
-# depending on the model's max_num_seqs.
-# NOTE: _get_graph_batch_size needs to be updated if this list is changed.
-_BATCH_SIZES_TO_CAPTURE = [1, 2, 4] + [
-    _BATCH_SIZE_ALIGNMENT * i for i in range(1, 1025)
-]
-_NUM_WARMUP_ITERS = 2
 
 TModelInputForNPU = TypeVar('TModelInputForNPU', bound="ModelInputForNPU")
 
@@ -302,6 +266,7 @@ class NPUModelRunner(ModelRunner):
 
     def model_router(self) -> None:
         # TODO: goto mindie_model when is_mindie() and model_supports_in_mindie()
+        # TODO: use super().load_model() after unify the DeviceMemoryProfiler
         self.get_vllm_model()
 
     def load_model(self) -> None:
@@ -350,7 +315,7 @@ class NPUModelRunner(ModelRunner):
                 self.prompt_adapter_manager.create_prompt_adapter_manager(
                     self.model))
 
-    @torch.inference_mode()
+    @current_platform.inference_mode()
     def profile_run(self) -> None:
         # Enable top-k sampling to reflect the accurate memory usage.
         sampling_params = SamplingParams(top_p=0.99, top_k=self.vocab_size - 1)
@@ -443,7 +408,7 @@ class NPUModelRunner(ModelRunner):
         current_platform.synchronize()
         return
 
-    @torch.inference_mode()
+    @current_platform.inference_mode()
     def capture_model(self, kv_caches: List[List[torch.Tensor]]) -> None:
         """NPU graph capture a model.
         TODO: not support now

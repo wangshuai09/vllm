@@ -1,18 +1,12 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple, Type
+import math
 
 import torch
-try:
-    import torch_npu
-except:
-    raise ImportError("torch-npu not found. 'pip install torch-npu' if using Ascend backend")
-
-import math
-import numpy as np
+import torch_npu
 
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
-                                              AttentionMetadata, AttentionType,
-                                              AttentionMetadataBuilder)
+                                              AttentionMetadata, AttentionType)
 from vllm.attention.backends.utils import (PAD_SLOT_ID, CommonAttentionState,
                                            CommonMetadataBuilder,
                                            compute_slot_mapping_start_idx,
@@ -21,7 +15,6 @@ from vllm.attention.ops.paged_attn import PagedAttention, PagedAttentionMetadata
 if TYPE_CHECKING:
     from vllm.worker.npu_model_runner import ModelInputForNPUBuilder
 
-from vllm.utils import make_tensor_with_pad
 
 SHARE_MASK_TRIL_PREFIX_CACHE = None
 SHARE_MASK_TRIL = None

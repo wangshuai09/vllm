@@ -51,7 +51,7 @@ class CustomOp(nn.Module):
         return self.forward_native(*args, **kwargs)
 
     def forward_npu(self, *args, **kwargs):
-        # By default, we assume that Gaudi ops are compatible with the
+        # By default, we assume that Ascend NPU ops are compatible with the
         # PyTorch-native implementation.
         # NOTE(woosuk): This is a placeholder for future extensions.
         # TODO: try torch_npu impl and replace if better perf

@@ -32,7 +32,7 @@ class AscendPlatform(Platform):
 
     @staticmethod
     def inference_mode():
-        return torch.no_grad()
+        return torch.inference_mode()
 
     @staticmethod
     def set_device(device: torch.device) -> torch.device:
