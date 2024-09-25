@@ -47,7 +47,7 @@ from vllm.prompt_adapter.worker_manager import (
 
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
-from vllm.utils import (DeviceMemoryProfiler, flatten_2d_lists,
+from vllm.utils import (flatten_2d_lists,
                         get_kv_cache_torch_dtype, is_hip,
                         is_pin_memory_available, make_tensor_with_pad)
 from vllm.worker.model_runner_base import (
@@ -309,7 +309,7 @@ class NPUModelRunner(ModelRunner):
 
     def get_vllm_model(self) -> None:
         logger.info("Starting to load model %s...", self.model_config.model)
-        with DeviceMemoryProfiler() as m:
+        with current_platform.memory_profiler() as m:
             self.model = get_model(model_config=self.model_config,
                                    device_config=self.device_config,
                                    load_config=self.load_config,

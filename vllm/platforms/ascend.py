@@ -51,9 +51,7 @@ class AscendPlatform(Platform):
         return torch.npu.mem_get_info()
 
     @staticmethod
-    def reset_peak_memory_stats(device: torch.device):
-        torch.npu.reset_peak_memory_stats(device)
-
-    @staticmethod
-    def max_memory_allocated(device: torch.device) -> int:
-        return torch.npu.max_memory_allocated(device)
+    def current_memory_usage(device: torch.device) -> float:
+        torch.npu.reset_peak_memory_stats(device)  # type: ignore
+        mem = torch.npu.max_memory_allocated(device)  # type: ignore
+        return mem
