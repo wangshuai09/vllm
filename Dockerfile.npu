@@ -1,4 +1,6 @@
 FROM ascendai/cann:8.0.rc3.alpha002-910b-ubuntu22.04-py3.9
+## Change to use the following if you failed with the above one
+# FROM quay.io/ascend/cann:8.0.rc3.alpha002-910b-ubuntu22.04-py3.9
 
 # Define environments
 ENV DEBIAN_FRONTEND=noninteractive
