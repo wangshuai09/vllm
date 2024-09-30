@@ -546,7 +546,6 @@ class LLMEngine:
                 "multiprocessing distributed executor backend does not "
                 "support VLLM_USE_RAY_SPMD_WORKER=1")
             executor_class = MultiprocessingGPUExecutor
-
         else:
             from vllm.executor.gpu_executor import GPUExecutor
             executor_class = GPUExecutor

@@ -30,7 +30,7 @@ def test_vllm_gc_ed():
 
 
 @pytest.mark.parametrize("model", MODELS)
-@pytest.mark.parametrize("backend", ["ASCEND_TORCH"])
+@pytest.mark.parametrize("backend", ["ASCEND"])
 @pytest.mark.parametrize("dtype", ["half"])
 @pytest.mark.parametrize("max_tokens", [50])
 @pytest.mark.parametrize("enforce_eager", [False])

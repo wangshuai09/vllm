@@ -9,12 +9,6 @@ from vllm.engine.llm_engine import LLMEngine
 from vllm.executor.gpu_executor import GPUExecutor, GPUExecutorAsync
 from vllm.executor.npu_executor import NPUExecutor, NPUExecutorAsync
 from vllm.sampling_params import SamplingParams
-from vllm.attention.backends.ascend import AscendPagedAttention
-from vllm.attention.ops.paged_attn import PagedAttention
-
-
-# NOTE (cmq): do monkey patch
-PagedAttention = AscendPagedAttention
 
 
 class Mock:

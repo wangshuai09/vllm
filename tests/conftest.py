@@ -209,22 +209,22 @@ _T = TypeVar("_T", nn.Module, torch.Tensor, BatchEncoding, BatchFeature)
 
 class HfRunner:
 
-    def wrap_device(self, input: _T) -> _T:
-        if is_cpu():
-            # Check if the input is already on the CPU
-            if hasattr(input, 'device') and input.device.type == "cpu":
-                return input  # Already on CPU, no need to move
-            return input.to("cpu")
-        elif current_platform.is_npu():
-            # Check if the input is already on the NPU
-            if hasattr(input, 'device') and input.device.type == "npu":
-                return input  # Already on GPU, no need to move
-            return input.to("npu")
-        else:
-            # Check if the input is already on the GPU
-            if hasattr(input, 'device') and input.device.type == "cuda":
-                return input  # Already on GPU, no need to move
-            return input.to("cuda")
+    def wrap_device(self, input: _T, device: Optional[str] = None) -> _T:
+        if device is None:
+            if current_platform.is_cpu():
+                current_device = "cpu"
+            elif current_platform.is_npu():
+                current_device = "npu"
+            elif current_platform.is_xpu():
+                current_device = "xpu"
+            else:
+                current_device = "cuda"
+            return self.wrap_device(input, current_device)
+
+        if hasattr(input, "device") and input.device.type == device:
+            return input
+
+        return input.to(device)
 
     def __init__(
         self,

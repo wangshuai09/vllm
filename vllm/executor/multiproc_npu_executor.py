@@ -9,6 +9,8 @@ from vllm.executor.multiproc_gpu_executor import (
 
 logger = init_logger(__name__)
 
+# TODO (cmq) fix daemon process cannot have children process error
+# os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1" doesn't work in _init_executor
 
 class MultiprocessingNPUExecutor(MultiprocessingGPUExecutor, NPUExecutor):
     """Python multiprocessing-based multi-NPU executor"""
