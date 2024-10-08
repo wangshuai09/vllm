@@ -1,6 +1,6 @@
 import dataclasses
 from dataclasses import dataclass
-from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Set, Type,
+from typing import (Any, Dict, List, Optional, Set, Type,
                     TypeVar)
 
 import torch
@@ -30,11 +30,12 @@ from vllm.prompt_adapter.worker_manager import (
 
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata
-from vllm.utils import (flatten_2d_lists, make_tensor_with_pad)
-from vllm.worker.model_runner import ModelInputForGPU, ModelInputForGPUBuilder, ModelInputForGPUWithSamplingMetadata, GPUModelRunnerBase, ModelRunner
+from vllm.utils import (DeviceMemoryProfiler, flatten_2d_lists,
+                        make_tensor_with_pad)
+from vllm.worker.model_runner import (ModelInputForGPU, ModelInputForGPUBuilder,
+                                      ModelInputForGPUWithSamplingMetadata,
+                                      ModelRunner)
 
-if TYPE_CHECKING:
-    from vllm.attention.backends.abstract import AttentionBackend
 
 logger = init_logger(__name__)
 
@@ -55,7 +56,8 @@ class ModelInputForNPU(ModelInputForGPU):
 
 
 @dataclass(frozen=True)
-class ModelInputForNPUWithSamplingMetadata(ModelInputForGPUWithSamplingMetadata):
+class ModelInputForNPUWithSamplingMetadata(
+        ModelInputForGPUWithSamplingMetadata):
     """
     Used by the ModelRunner.
     """
@@ -102,42 +104,34 @@ class ModelInputForNPUBuilder(ModelInputForGPUBuilder):
         }
 
         batch_size = len(input_tokens)
-        use_captured_graph = self._use_captured_graph(batch_size,
-                                                      max_decode_seq_len)
 
         # If cuda graph can be used, pad tensors accordingly.
         # See `capture_model` API for more details.
         # vLLM uses cuda graph only for decoding requests.
         cuda_graph_pad_size = -1
-        # # TODO (cmq): support cuda graph
-        # if use_captured_graph:
-        #     graph_batch_size = _get_graph_batch_size(batch_size)
-        #     assert graph_batch_size >= batch_size
-        #     cuda_graph_pad_size = graph_batch_size - batch_size
-        #     batch_size = graph_batch_size
-
-        # # Tokens and positions.
-        # input_tokens.extend([0] * cuda_graph_pad_size)
-        # input_positions.extend([0] * cuda_graph_pad_size)
 
         if self.inter_data_list[0].is_prompt:
-            input_tokens_tensor = make_tensor_with_pad(input_tokens, 0,
-                                                       dtype=torch.int,
-                                                       device=self.runner.device)
-            input_positions_tensor = make_tensor_with_pad(input_positions, 0,
-                                                       dtype=torch.int,
-                                                       device=self.runner.device)
+            input_tokens_tensor = make_tensor_with_pad(
+                                                    input_tokens, 0,
+                                                    dtype=torch.int,
+                                                    device=self.runner.device)
+            input_positions_tensor = make_tensor_with_pad(
+                                                    input_positions, 0,
+                                                    dtype=torch.int,
+                                                    device=self.runner.device)
             input_tokens_tensor = torch.flatten(input_tokens_tensor)
             input_positions_tensor = torch.flatten(input_positions_tensor)
             max_seq_len = max(seq_lens)
             seq_lens = len(seq_lens) * [max_seq_len]
         else:
-            input_tokens_tensor = torch.tensor(flatten_2d_lists(input_tokens),
+            input_tokens_tensor = torch.tensor(
+                                            flatten_2d_lists(input_tokens),
                                             dtype=torch.long,
                                             device=self.runner.device)
-            input_positions_tensor = torch.tensor(flatten_2d_lists(input_positions),
-                                                dtype=torch.long,
-                                                device=self.runner.device)
+            input_positions_tensor = torch.tensor(
+                                            flatten_2d_lists(input_positions),
+                                            dtype=torch.long,
+                                            device=self.runner.device)
 
         # Sequence and query lengths.
         seq_lens.extend([1] * cuda_graph_pad_size)
@@ -274,7 +268,7 @@ class NPUModelRunner(ModelRunner):
 
     def get_vllm_model(self) -> None:
         logger.info("Starting to load model %s...", self.model_config.model)
-        with current_platform.memory_profiler() as m:
+        with DeviceMemoryProfiler() as m:
             self.model = get_model(model_config=self.model_config,
                                    device_config=self.device_config,
                                    load_config=self.load_config,

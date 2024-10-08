@@ -702,10 +702,12 @@ class AsyncLLMEngine:
                     "Not supported distributed execution model on XPU device.")
         elif engine_config.device_config.device_type == "npu":
             if distributed_executor_backend == "mp":
-                from vllm.executor.multiproc_npu_executor import MultiprocessingNPUExecutorAsync
+                from vllm.executor.multiproc_npu_executor import (
+                    MultiprocessingNPUExecutorAsync)
                 executor_class = MultiprocessingNPUExecutorAsync
             elif distributed_executor_backend == "ray":
-                raise NotImplementedError("ray is not implemented in Ascend NPU currently")
+                raise NotImplementedError(
+                    "ray is not implemented in Ascend NPU currently")
             else:
                 from vllm.executor.npu_executor import NPUExecutorAsync
                 executor_class = NPUExecutorAsync

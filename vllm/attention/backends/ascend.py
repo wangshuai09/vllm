@@ -54,8 +54,10 @@ class AscendAttentionBackend(AttentionBackend):
         src_indices = src_to_dst[:, 0]
         dst_indices = src_to_dst[:, 1]
 
-        dst_key_cache[dst_indices] = src_key_cache[src_indices].to(dst_key_cache.device)
-        dst_value_cache[dst_indices] = src_value_cache[src_indices].to(dst_key_cache.device)
+        dst_key_cache[dst_indices] = src_key_cache[src_indices].to(
+                                                        dst_key_cache.device)
+        dst_value_cache[dst_indices] = src_value_cache[src_indices].to(
+                                                        dst_key_cache.device)
 
 
     @staticmethod
@@ -266,9 +268,9 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
 
     _metadata_cls = AscendMetadata
 
-    def compute_npu_slot_indices(self, is_profile_run, slot_indices, seq_id, seq_len,
-                                context_len, start_idx, block_size, block_tables,
-                                max_query_len):
+    def compute_npu_slot_indices(self, is_profile_run, slot_indices, seq_id,
+                                 seq_len, context_len, start_idx, block_size,
+                                 block_tables, max_query_len):
         """
         compute slot indices
 
@@ -317,7 +319,8 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
         """
         is_prompt = inter_data.is_prompt
         block_tables = inter_data.block_tables
-        max_query_len = max(max(data.query_lens) for data in self.input_builder.inter_data_list)
+        max_query_len = max(max(data.query_lens)
+                            for data in self.input_builder.inter_data_list)
 
         is_prompt = inter_data.is_prompt
         block_tables = inter_data.block_tables
@@ -359,9 +362,11 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
                 is_prompt, query_len, context_len, self.sliding_window,
                 self.use_v2_block_manager)
 
-            self.compute_npu_slot_indices(is_profile_run, self.slot_mapping, seq_id, seq_len,
-                                     context_len, start_idx, self.block_size, inter_data.block_tables,
-                                     max_query_len)
+            self.compute_npu_slot_indices(is_profile_run, self.slot_mapping,
+                                          seq_id, seq_len, context_len,
+                                          start_idx, self.block_size,
+                                          inter_data.block_tables,
+                                          max_query_len)
 
 
 class AscendAttentionBackendImpl(AttentionImpl):
@@ -451,7 +456,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 )
                 attn_metadata.attn_mask = attention_mask
 
-            if self.alibi_slopes is not None and attn_metadata.pse_shift is None:
+            if (self.alibi_slopes is not None
+                    and attn_metadata.pse_shift is None):
                 attn_metadata.pse_shift = _make_alibi_bias(
                     self.alibi_slopes,
                     self.num_kv_heads,
@@ -461,15 +467,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 )
 
             # shape of q/k/v [B,S*H] --> [B,S,N,D]
-            query = query.view(
-                -1, attn_metadata.max_prefill_seq_len, self.num_heads, self.head_size
-            ).transpose(1, 2)
-            key = key.view(
-                -1, attn_metadata.max_prefill_seq_len, self.num_kv_heads, self.head_size
-            ).transpose(1, 2)
-            value = value.view(
-                -1, attn_metadata.max_prefill_seq_len, self.num_kv_heads, self.head_size
-            ).transpose(1, 2)
+            query = query.view(-1, attn_metadata.max_prefill_seq_len,
+                               self.num_heads, self.head_size).transpose(1, 2)
+            key = key.view(-1, attn_metadata.max_prefill_seq_len,
+                           self.num_kv_heads, self.head_size).transpose(1, 2)
+            value = value.view(-1, attn_metadata.max_prefill_seq_len,
+                               self.num_kv_heads,
+                               self.head_size).transpose(1, 2)
 
             # FA for prefill phase
             output = torch_npu.npu_prompt_flash_attention(
@@ -490,7 +494,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 num_tokens, -1, self.num_heads * self.head_size
             )
 
-        elif decode_meta := attn_metadata.decode_metadata:
+        elif attn_metadata.decode_metadata:
             # FA for decoding phase
             assert kv_cache is not None
             # shape of query [B,S*H] --> [B,S,H]
@@ -523,7 +527,6 @@ def gen_input_mask(seq_len, sliding_window, len):
     Generating lower triangular matrix
     """
     if len > 16384:
-        # TODO (cmq): test me
         # improve computing performance on NPU when input tokens are huge
         global SHARE_MASK_TRIL_PREFIX_CACHE
         if SHARE_MASK_TRIL_PREFIX_CACHE is None:

@@ -105,7 +105,8 @@ class RMSNorm(CustomOp):
                                                  self.variance_epsilon)
             return x, residual
 
-        x, residual = torch_npu.npu_rms_norm(x, self.weight, self.variance_epsilon)
+        x, residual = torch_npu.npu_rms_norm(x, self.weight,
+                                             self.variance_epsilon)
         return x
 
 

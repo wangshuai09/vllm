@@ -165,7 +165,8 @@ class SamplingMetadata:
             categorized_sample_indices,
             num_prompts,
         ) = _prepare_seq_groups(seq_group_metadata_list, seq_lens, query_lens,
-                                device, generators, cache, pad_for_invariant_seq_len)
+                                device, generators, cache,
+                                pad_for_invariant_seq_len)
         selected_token_indices = async_tensor_h2d(selected_token_indices,
                                                   dtype=torch.long,
                                                   target_device=device,
