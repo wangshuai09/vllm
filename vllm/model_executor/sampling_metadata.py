@@ -274,6 +274,7 @@ def _prepare_seq_groups(
             sample_obj.prompt_logprob_indices if cache is not None else []
         sample_indices: List[int] = \
             sample_obj.sample_indices if cache is not None else []
+
         do_sample = seq_group_metadata.do_sample
 
         if seq_group_metadata.is_prompt:

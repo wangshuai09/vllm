@@ -1,76 +1,38 @@
 import dataclasses
-from dataclasses import dataclass
-from typing import (Any, Dict, List, Optional, Set, Type,
-                    TypeVar)
+from typing import Any, Dict, List, Optional, Set, Type
 
 import torch
 import torch.distributed
 
-
-from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
-                         ModelConfig, ObservabilityConfig, ParallelConfig,
-                         PromptAdapterConfig, SchedulerConfig)
 from vllm.distributed import get_pp_group
-from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.model_executor import SamplingMetadata
-from vllm.model_executor.model_loader import get_model
-from vllm.model_executor.models.interfaces import (supports_lora,
-                                                   supports_multimodal)
-from vllm.multimodal import (MULTIMODAL_REGISTRY, MultiModalInputs,
-                             MultiModalRegistry)
+from vllm.multimodal import MultiModalInputs
 from vllm.platforms import current_platform
 from vllm.prompt_adapter.layers import PromptAdapterMapping
 from vllm.prompt_adapter.request import PromptAdapterRequest
-from vllm.prompt_adapter.worker_manager import (
-    LRUCacheWorkerPromptAdapterManager)
-
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata
-from vllm.utils import (DeviceMemoryProfiler, flatten_2d_lists,
-                        make_tensor_with_pad)
-from vllm.worker.model_runner import (ModelInputForGPU, ModelInputForGPUBuilder,
+from vllm.utils import flatten_2d_lists, make_tensor_with_pad
+from vllm.worker.model_runner import (ModelInputForGPU,
+                                      ModelInputForGPUBuilder,
                                       ModelInputForGPUWithSamplingMetadata,
                                       ModelRunner)
-
 
 logger = init_logger(__name__)
 
 LORA_WARMUP_RANK = 8
 
-TModelInputForNPU = TypeVar('TModelInputForNPU', bound="ModelInputForNPU")
-
-
-@dataclass(frozen=True)
-class ModelInputForNPU(ModelInputForGPU):
-    """
-    This base class contains metadata needed for the base model forward pass
-    but not metadata for possible additional steps, e.g., sampling. Model
-    runners that run additional steps should subclass this method to add
-    additional fields.
-    """
-    pass
-
-
-@dataclass(frozen=True)
-class ModelInputForNPUWithSamplingMetadata(
-        ModelInputForGPUWithSamplingMetadata):
-    """
-    Used by the ModelRunner.
-    """
-    pass
-
 
 class ModelInputForNPUBuilder(ModelInputForGPUBuilder):
-    """Build ModelInputForNPU from SequenceGroupMetadata."""
+    """Build ModelInputForGPU from SequenceGroupMetadata."""
 
     # Note: ideally we would be using a dataclass(kw_only=True)
     # here, so that this can be subclassed easily,
     # but kw_only is not supported in python<3.10.
-    def build(self) -> ModelInputForNPU:
+    def build(self) -> ModelInputForGPU:
         """Finalize the builder intermediate data and
         create on-device tensors.
         """
@@ -112,26 +74,21 @@ class ModelInputForNPUBuilder(ModelInputForGPUBuilder):
 
         if self.inter_data_list[0].is_prompt:
             input_tokens_tensor = make_tensor_with_pad(
-                                                    input_tokens, 0,
-                                                    dtype=torch.int,
-                                                    device=self.runner.device)
+                input_tokens, 0, dtype=torch.int, device=self.runner.device)
             input_positions_tensor = make_tensor_with_pad(
-                                                    input_positions, 0,
-                                                    dtype=torch.int,
-                                                    device=self.runner.device)
+                input_positions, 0, dtype=torch.int, device=self.runner.device)
             input_tokens_tensor = torch.flatten(input_tokens_tensor)
             input_positions_tensor = torch.flatten(input_positions_tensor)
             max_seq_len = max(seq_lens)
             seq_lens = len(seq_lens) * [max_seq_len]
         else:
-            input_tokens_tensor = torch.tensor(
-                                            flatten_2d_lists(input_tokens),
-                                            dtype=torch.long,
-                                            device=self.runner.device)
+            input_tokens_tensor = torch.tensor(flatten_2d_lists(input_tokens),
+                                               dtype=torch.long,
+                                               device=self.runner.device)
             input_positions_tensor = torch.tensor(
-                                            flatten_2d_lists(input_positions),
-                                            dtype=torch.long,
-                                            device=self.runner.device)
+                flatten_2d_lists(input_positions),
+                dtype=torch.long,
+                device=self.runner.device)
 
         # Sequence and query lengths.
         seq_lens.extend([1] * cuda_graph_pad_size)
@@ -207,107 +164,20 @@ class NPUModelRunner(ModelRunner):
     """
     NPU model runner with sampling step.
     """
-    _model_input_cls: Type[ModelInputForNPUWithSamplingMetadata] = (
-        ModelInputForNPUWithSamplingMetadata)
+    _model_input_cls: Type[ModelInputForGPUWithSamplingMetadata] = (
+        ModelInputForGPUWithSamplingMetadata)
     _builder_cls: Type[ModelInputForNPUBuilder] = ModelInputForNPUBuilder
-
-    def __init__(
-        self,
-        model_config: ModelConfig,
-        parallel_config: ParallelConfig,
-        scheduler_config: SchedulerConfig,
-        device_config: DeviceConfig,
-        cache_config: CacheConfig,
-        load_config: LoadConfig,
-        lora_config: Optional[LoRAConfig],
-        mindie_model_config: Optional[dict],
-        kv_cache_dtype: Optional[str] = "auto",
-        is_driver_worker: bool = False,
-        prompt_adapter_config: Optional[PromptAdapterConfig] = None,
-        return_hidden_states: bool = False,
-        observability_config: Optional[ObservabilityConfig] = None,
-        input_registry: InputRegistry = INPUT_REGISTRY,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY):
-        super().__init__(
-            model_config,
-            parallel_config,
-            scheduler_config,
-            device_config,
-            cache_config,
-            load_config,
-            lora_config,
-            kv_cache_dtype,
-            is_driver_worker,
-            prompt_adapter_config,
-            return_hidden_states,
-            observability_config,
-            input_registry,
-            mm_registry,
-            )
-
-        self.mindie_model_config = mindie_model_config
 
     def make_model_input_from_broadcasted_tensor_dict(
         self,
         tensor_dict: Dict[str, Any],
-    ) -> ModelInputForNPUWithSamplingMetadata:
+    ) -> ModelInputForGPUWithSamplingMetadata:
         model_input = \
-            ModelInputForNPUWithSamplingMetadata.from_broadcasted_tensor_dict(
+            ModelInputForGPUWithSamplingMetadata.from_broadcasted_tensor_dict(
                 tensor_dict,
                 attn_backend=self.attn_backend,
             )
         return model_input
-
-    def model_router(self) -> None:
-        # TODO: goto mindie_model when is_mindie() and model_supports_in_mindie()
-        # TODO: use super().load_model() after unify the DeviceMemoryProfiler
-        self.get_vllm_model()
-
-    def load_model(self) -> None:
-        self.model_router()
-
-    def get_vllm_model(self) -> None:
-        logger.info("Starting to load model %s...", self.model_config.model)
-        with DeviceMemoryProfiler() as m:
-            self.model = get_model(model_config=self.model_config,
-                                   device_config=self.device_config,
-                                   load_config=self.load_config,
-                                   lora_config=self.lora_config,
-                                   parallel_config=self.parallel_config,
-                                   scheduler_config=self.scheduler_config,
-                                   cache_config=self.cache_config)
-
-        self.model_memory_usage = m.consumed_memory
-        logger.info("Loading model weights took %.4f GB",
-                    self.model_memory_usage / float(2**30))
-
-        if self.lora_config:
-            assert supports_lora(self.model), "Model does not support LoRA"
-            assert not supports_multimodal(
-                self.model
-            ), "To be tested: Multi-modal model with LoRA settings."
-
-            self.lora_manager = LRUCacheWorkerLoRAManager(
-                self.scheduler_config.max_num_seqs,
-                self.scheduler_config.max_num_batched_tokens,
-                self.vocab_size,
-                self.lora_config,
-                self.device,
-                self.model.embedding_modules,
-                self.model.embedding_padding_modules,
-                max_position_embeddings=self.model.config.
-                max_position_embeddings,
-            )
-            self.model = self.lora_manager.create_lora_manager(self.model)
-
-        if self.prompt_adapter_config:
-            self.prompt_adapter_manager = LRUCacheWorkerPromptAdapterManager(
-                self.scheduler_config.max_num_seqs,
-                self.scheduler_config.max_num_batched_tokens, self.device,
-                self.prompt_adapter_config)
-            self.model = (
-                self.prompt_adapter_manager.create_prompt_adapter_manager(
-                    self.model))
 
     @current_platform.inference_mode()
     def profile_run(self) -> None:
@@ -434,9 +304,13 @@ class NPUModelRunner(ModelRunner):
             # Sampling metadata is only required for the final pp group
             generators = self.get_generators(finished_requests_ids)
             sampling_metadata = SamplingMetadata.prepare(
-                seq_group_metadata_list, model_input.seq_lens,
-                model_input.query_lens, self.device, self.pin_memory,
-                generators, self.sampling_metadata_cache,
+                seq_group_metadata_list,
+                model_input.seq_lens,
+                model_input.query_lens,
+                self.device,
+                self.pin_memory,
+                generators,
+                self.sampling_metadata_cache,
                 pad_for_invariant_seq_len=True)
         else:
             sampling_metadata = None

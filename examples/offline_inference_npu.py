@@ -1,13 +1,18 @@
 import gc
+
 import torch
+
 from vllm import LLM, SamplingParams
-from vllm.distributed.parallel_state import destroy_model_parallel, destroy_distributed_environment
+from vllm.distributed.parallel_state import (destroy_distributed_environment,
+                                             destroy_model_parallel)
+
 
 def clean_up():
     destroy_model_parallel()
     destroy_distributed_environment()
     gc.collect()
     torch.npu.empty_cache()
+
 
 # Sample prompts.
 prompts = [

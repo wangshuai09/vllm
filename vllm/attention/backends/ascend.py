@@ -1,6 +1,6 @@
-from dataclasses import dataclass
-from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple, Type
 import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type
 
 import torch
 import torch_npu
@@ -11,10 +11,11 @@ from vllm.attention.backends.utils import (PAD_SLOT_ID, CommonAttentionState,
                                            CommonMetadataBuilder,
                                            compute_slot_mapping_start_idx,
                                            is_block_tables_empty)
-from vllm.attention.ops.paged_attn import PagedAttention, PagedAttentionMetadata
+from vllm.attention.ops.paged_attn import (PagedAttention,
+                                           PagedAttentionMetadata)
+
 if TYPE_CHECKING:
     from vllm.worker.npu_model_runner import ModelInputForNPUBuilder
-
 
 SHARE_MASK_TRIL_PREFIX_CACHE = None
 SHARE_MASK_TRIL = None
@@ -55,10 +56,9 @@ class AscendAttentionBackend(AttentionBackend):
         dst_indices = src_to_dst[:, 1]
 
         dst_key_cache[dst_indices] = src_key_cache[src_indices].to(
-                                                        dst_key_cache.device)
+            dst_key_cache.device)
         dst_value_cache[dst_indices] = src_value_cache[src_indices].to(
-                                                        dst_key_cache.device)
-
+            dst_key_cache.device)
 
     @staticmethod
     def copy_blocks(
@@ -222,7 +222,7 @@ class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
             encoder_seq_lens=self.encoder_seq_lens,
             encoder_seq_lens_tensor=self.encoder_seq_lens_tensor,
             max_encoder_seq_len=self.max_encoder_seq_len,
-            )
+        )
         return self._cached_prefill_metadata
 
     @property
@@ -260,7 +260,7 @@ class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
             encoder_seq_lens=self.encoder_seq_lens,
             encoder_seq_lens_tensor=self.encoder_seq_lens_tensor,
             max_encoder_seq_len=self.max_encoder_seq_len,
-            )
+        )
         return self._cached_decode_metadata
 
 
@@ -308,10 +308,8 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
         slot_indices.extend([[PAD_SLOT_ID, 0]] * (max_query_len - numel))
 
     def _add_seq_group(
-        self,
-        inter_data: "ModelInputForNPUBuilder.InterDataForSeqGroup",
-        chunked_prefill_enabled: bool
-    ):
+            self, inter_data: "ModelInputForNPUBuilder.InterDataForSeqGroup",
+            chunked_prefill_enabled: bool):
         """Add a sequence group to the metadata. Specifically update/append
         1. context length.
         2. block table.
@@ -319,8 +317,9 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
         """
         is_prompt = inter_data.is_prompt
         block_tables = inter_data.block_tables
-        max_query_len = max(max(data.query_lens)
-                            for data in self.input_builder.inter_data_list)
+        max_query_len = max(
+            max(data.query_lens)
+            for data in self.input_builder.inter_data_list)
 
         is_prompt = inter_data.is_prompt
         block_tables = inter_data.block_tables
@@ -401,7 +400,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
         value: torch.Tensor,
         kv_cache: List[torch.Tensor],
         attn_metadata: AscendMetadata,
-        kv_scale: float = 1.0,
         k_scale: float = 1.0,
         v_scale: float = 1.0,
         attn_type: AttentionType = AttentionType.DECODER,
@@ -413,29 +411,34 @@ class AscendAttentionBackendImpl(AttentionImpl):
                    num_tokens = batch_size * seq_len
             key: shape = [num_tokens, num_kv_heads * head_size]
             value: shape = [num_tokens, num_kv_heads * head_size]
-            kv_cache: shape = [2, num_blocks, block_size, num_kv_heads * head_size]
-                      key_cache   [num_blocks, block_size, num_kv_heads * head_size]
-                      value_cache [num_blocks, block_size, num_kv_heads * head_size]
+            kv_cache: shape = [2, num_blocks, block_size,
+                               num_kv_heads * head_size]
+                      key_cache = [num_blocks, block_size,
+                                   num_kv_heads * head_size]
+                      value_cache = [num_blocks, block_size,
+                                     num_kv_heads * head_size]
             attn_metadata: Metadata for attention.
         Returns:
             shape = [batch_size, seq_len * num_heads * head_size]
         """
         assert k_scale == 1.0 and v_scale == 1.0
         if attn_type != AttentionType.DECODER:
-            raise NotImplementedError(
-                "Encoder self-attention and "
-                "encoder/decoder cross-attention "
-                "are not implemented for "
-                "PallasAttentionBackendImpl"
-            )
+            raise NotImplementedError("Encoder self-attention and "
+                                      "encoder/decoder cross-attention "
+                                      "are not implemented for "
+                                      "PallasAttentionBackendImpl")
         # view q k v to BSH
         num_tokens = query.shape[0]
 
         if kv_cache is not None:
             if attn_metadata.num_prefills > 0:
-                slot_indices = attn_metadata.prefill_metadata.slot_mapping
+                slot_indices = (None
+                                if attn_metadata.prefill_metadata is None else
+                                attn_metadata.prefill_metadata.slot_mapping)
             else:
-                slot_indices = attn_metadata.decode_metadata.slot_mapping
+                slot_indices = (None
+                                if attn_metadata.decode_metadata is None else
+                                attn_metadata.decode_metadata.slot_mapping)
             key_cache, value_cache = kv_cache[0], kv_cache[1]
             AscendPagedAttention.write_to_paged_cache(
                 key,
@@ -450,10 +453,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 if num_tokens > 16384:
                     attn_metadata.sparse_mode = 2
                 attention_mask = gen_input_mask(
-                    attn_metadata.max_prefill_seq_len,
-                    self.sliding_window,
-                    num_tokens
-                )
+                    attn_metadata.max_prefill_seq_len, self.sliding_window,
+                    num_tokens)
                 attn_metadata.attn_mask = attention_mask
 
             if (self.alibi_slopes is not None
@@ -491,8 +492,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 sparse_mode=attn_metadata.sparse_mode,
             )
             output = output.transpose(1, 2).reshape(
-                num_tokens, -1, self.num_heads * self.head_size
-            )
+                num_tokens, -1, self.num_heads * self.head_size)
 
         elif attn_metadata.decode_metadata:
             # FA for decoding phase
@@ -539,15 +539,13 @@ def gen_input_mask(seq_len, sliding_window, len):
         global SHARE_MASK_TRIL
         if SHARE_MASK_TRIL is None or SHARE_MASK_TRIL.shape[0] < seq_len:
             SHARE_MASK_TRIL = ~torch.tril(
-                torch.ones(seq_len, seq_len, dtype=bool, device="npu")
-            )
+                torch.ones(seq_len, seq_len, dtype=bool, device="npu"))
 
         attention_mask = SHARE_MASK_TRIL
         if sliding_window is not None:
             attention_mask = ~attention_mask
-            attention_mask = torch.triu(
-                attention_mask, diagonal=1 - sliding_window
-            )
+            attention_mask = torch.triu(attention_mask,
+                                        diagonal=1 - sliding_window)
             attention_mask = ~attention_mask
 
     return attention_mask

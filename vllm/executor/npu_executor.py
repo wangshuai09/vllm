@@ -1,4 +1,4 @@
-from typing import List, Optional, Callable, Type, Tuple
+from typing import Callable, List, Optional, Tuple, Type
 
 from vllm.executor.executor_base import ExecutorAsyncBase
 from vllm.executor.gpu_executor import GPUExecutor

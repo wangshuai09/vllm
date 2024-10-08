@@ -1,5 +1,5 @@
-from typing import Tuple
 import os
+from typing import Tuple
 
 import torch
 
@@ -36,7 +36,7 @@ class AscendPlatform(Platform):
         return torch.inference_mode()
 
     @classmethod
-    def set_device(cls, device: torch.device) -> torch.device:
+    def set_device(cls, device: torch.device):
         torch.npu.set_device(device)
 
     @classmethod

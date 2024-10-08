@@ -1,6 +1,6 @@
 """A NPU worker class."""
 import gc
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.distributed
@@ -17,6 +17,7 @@ from vllm.platforms import current_platform
 from vllm.sequence import SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.embedding_model_runner import EmbeddingModelRunner
+from vllm.worker.model_runner import GPUModelRunnerBase
 from vllm.worker.npu_model_runner import NPUModelRunner
 from vllm.worker.worker import Worker
 
@@ -78,20 +79,13 @@ class NPUWorker(Worker):
                 not in ["medusa", "mlp_speculator"]) \
                     else {"return_hidden_states": True}
 
-        ModelRunnerClass: Type[NPUModelRunner] = NPUModelRunner
+        ModelRunnerClass: Union[Type[NPUModelRunner],
+                                Type[EmbeddingModelRunner]] = NPUModelRunner
         if model_runner_cls is not None:
             ModelRunnerClass = model_runner_cls
-        elif self.model_config.embedding_mode:
+        elif self._is_embedding_model():
             ModelRunnerClass = EmbeddingModelRunner
-        mindie_model_config = {
-            "backend_type": "atb",
-            "model_id": model_config.model,
-            "rank": rank,
-            "local_rank": local_rank,
-            "world_size": parallel_config.world_size,
-            "npu_device_id": local_rank,
-        }
-        self.model_runner: NPUModelRunner = ModelRunnerClass(
+        self.model_runner: GPUModelRunnerBase = ModelRunnerClass(
             model_config,
             parallel_config,
             scheduler_config,
@@ -99,7 +93,6 @@ class NPUWorker(Worker):
             cache_config,
             load_config=load_config,
             lora_config=self.lora_config,
-            mindie_model_config=mindie_model_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
             is_driver_worker=is_driver_worker,
             prompt_adapter_config=prompt_adapter_config,
@@ -115,14 +108,6 @@ class NPUWorker(Worker):
 
     def init_device(self) -> None:
         if self.device_config.device.type == "npu":
-            # # torch.distributed.all_reduce does not free the input tensor until
-            # # the synchronization point. This causes the memory usage to grow
-            # # as the number of all_reduce calls increases. This env var disables
-            # # this behavior.
-            # # Related issue:
-            # # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
-            # os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
-
             # # This env var set by Ray causes exceptions with graph building.
             # os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
             self.device = torch.device(f"npu:{self.local_rank}")
@@ -193,12 +178,11 @@ class NPUWorker(Worker):
 
 
 def init_worker_distributed_environment(
-    parallel_config: ParallelConfig,
-    rank: int,
-    distributed_init_method: Optional[str] = None,
-    local_rank: int = -1,
-    backend: str = "hccl"
-) -> None:
+        parallel_config: ParallelConfig,
+        rank: int,
+        distributed_init_method: Optional[str] = None,
+        local_rank: int = -1,
+        backend: str = "hccl") -> None:
     """Initialize the distributed environment."""
     set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
 

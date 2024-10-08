@@ -225,16 +225,9 @@ async def run_vllm_async(
         return end - start
 
 
-def run_hf(
-    requests: List[Tuple[str, int, int]],
-    model: str,
-    tokenizer: PreTrainedTokenizerBase,
-    n: int,
-    use_beam_search: bool,
-    max_batch_size: int,
-    trust_remote_code: bool,
-    device: str
-) -> float:
+def run_hf(requests: List[Tuple[str, int, int]], model: str,
+           tokenizer: PreTrainedTokenizerBase, n: int, use_beam_search: bool,
+           max_batch_size: int, trust_remote_code: bool, device: str) -> float:
     assert not use_beam_search
     llm = AutoModelForCausalLM.from_pretrained(
         model, torch_dtype=torch.float16, trust_remote_code=trust_remote_code)

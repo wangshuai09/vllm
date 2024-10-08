@@ -13,8 +13,8 @@ from vllm.utils import is_hip
 from ..models.utils import check_outputs_equal
 
 MODELS = [
-    "facebook/opt-125m",
-    "meta-llama/Llama-2-7b-hf",
+    "facebook/opt-125m", "/home/models/llama-2-7b/"
+    # "meta-llama/Llama-2-7b-hf",
 ]
 
 
