@@ -217,7 +217,6 @@ def which_attn_to_use(
 
     if current_platform.is_npu():
         # Ascend NPU
-        # TODO: mindie
         if selected_backend != _Backend.ASCEND:
             logger.info("Cannot use %s backend on NPU.", selected_backend)
         return _Backend.ASCEND

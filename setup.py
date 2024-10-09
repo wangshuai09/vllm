@@ -457,7 +457,6 @@ def get_requirements() -> List[str]:
         raise ValueError(
             "Unsupported platform, please use CUDA, ROCm, Neuron, "
             "OpenVINO, or CPU.")
-    print("requirements", requirements)
     return requirements
 
 

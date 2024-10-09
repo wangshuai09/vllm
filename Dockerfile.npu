@@ -20,7 +20,6 @@ COPY examples/ /workspace/vllm/examples
 COPY tests/ /workspace/vllm/tests
 
 # install build requirements
-RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 RUN PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" python3 -m pip install -r /workspace/vllm/requirements-build.txt
 # build vLLM with NPU backend
 RUN PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" VLLM_TARGET_DEVICE="npu" python3 -m pip install /workspace/vllm/
