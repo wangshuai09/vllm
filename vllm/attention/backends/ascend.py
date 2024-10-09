@@ -431,14 +431,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         num_tokens = query.shape[0]
 
         if kv_cache is not None:
-            if attn_metadata.num_prefills > 0:
-                slot_indices = (None
-                                if attn_metadata.prefill_metadata is None else
-                                attn_metadata.prefill_metadata.slot_mapping)
-            else:
-                slot_indices = (None
-                                if attn_metadata.decode_metadata is None else
-                                attn_metadata.decode_metadata.slot_mapping)
+            slot_indices = attn_metadata.slot_mapping
             key_cache, value_cache = kv_cache[0], kv_cache[1]
             AscendPagedAttention.write_to_paged_cache(
                 key,
